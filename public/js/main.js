@@ -2,8 +2,8 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow } from './graph.js';
-import { Panel, pumpRedraws, PW } from './panels.js';
+import { parseWorkflow, typesAccepting, colorForType } from './graph.js';
+import { Panel, pumpRedraws, PW, buttonRow } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage } from './comfy.js';
@@ -169,6 +169,7 @@ function stepBack() {
 // ---------- input ----------
 const keys = new Set();
 let pdown = null, dragMode = null, sliderDrag = null;
+let pendingGrab = null, moveDrag = null, linkDrag = null, palette = null;
 let lastInput = performance.now();
 const canvas = renderer.domElement;
 
@@ -176,12 +177,25 @@ canvas.addEventListener('pointerdown', (e) => {
   audio.ensure();
   lastInput = performance.now();
   pdown = { x: e.clientX, y: e.clientY };
-  dragMode = null;
+  dragMode = null; pendingGrab = null;
   const hit = pick(e);
-  if (hit && reachable(hit) && hit.rowInfo?.kind === 'slider') {
-    sliderDrag = hit;
-    dragMode = 'slider';
-    applySlider(hit, e);
+  if (hit && reachable(hit) && hit.rowInfo) {
+    const ri = hit.rowInfo;
+    if (ri.kind === 'slider') {
+      sliderDrag = hit;
+      dragMode = 'slider';
+      applySlider(hit, e);
+    } else if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null) {
+      pendingGrab = { kind: 'move', hit };
+    } else if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null) {
+      const s = portSlotAt(hit);
+      if (s && s.dir === 'out') {
+        pendingGrab = { kind: 'link', drag: { mode: 'new', hub: hit.hub, type: s.type, srcNode: s.node.id, srcSlot: s.index } };
+      } else if (s && s.dir === 'in' && s.node.linkInputs[s.index]?.link != null) {
+        const L = hit.hub.graph.links.get(s.node.linkInputs[s.index].link);
+        if (L) pendingGrab = { kind: 'link', drag: { mode: 'retarget', hub: hit.hub, type: L.type, srcNode: L.src, srcSlot: L.srcSlot, linkId: L.id } };
+      }
+    }
   }
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events have no real pointerId */ }
 });
@@ -195,39 +209,187 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   if (pdown) {
-    const dx = e.clientX - pdown.x, dy = e.clientY - pdown.y;
-    if (dragMode || Math.hypot(dx, dy) > 4) {
+    lastInput = performance.now();
+    const moved = Math.hypot(e.clientX - pdown.x, e.clientY - pdown.y) > 4;
+    if (!dragMode && moved && pendingGrab) {
+      if (pendingGrab.kind === 'move') beginMove(pendingGrab, e);
+      else beginLink(pendingGrab.drag);
+    }
+    if (dragMode === 'move') { doMove(e); return; }
+    if (dragMode === 'link') { doLinkDrag(e); return; }
+    if (dragMode === 'look' || moved) {
       dragMode = 'look';
-      lastInput = performance.now();
       cam.yaw -= e.movementX * 0.0031;
       cam.pitch = THREE.MathUtils.clamp(cam.pitch - e.movementY * 0.0031, -1.5, 1.5);
       cam.anim = null; cam.dock = null;
       if (cam.level === 'panel') cam.level = 'hub';
     }
-  } else {
-    hover(e);
+    return;
   }
+  hover(e);
 });
 canvas.addEventListener('pointerup', (e) => {
   lastInput = performance.now();
   if (dragMode === null && pdown) onClick(e);
   if (dragMode === 'slider') audio.tick();
-  pdown = null; dragMode = null; sliderDrag = null;
+  if (dragMode === 'move') endMove();
+  if (dragMode === 'link') endLink(e);
+  pdown = null; dragMode = null; sliderDrag = null; pendingGrab = null;
 });
 canvas.addEventListener('wheel', (e) => {
   lastInput = performance.now();
+  if (dragMode === 'move' && moveDrag) {
+    // wheel while holding a node pulls it radially between rings
+    const p = moveDrag.panel;
+    moveDrag.hub.moveNode(moveDrag.id, p.placement.theta, p.placement.y, p.placement.r + (e.deltaY > 0 ? 1.4 : -1.4));
+    audio.zip(Math.min(1, p.placement.r / 40));
+    return;
+  }
   cam.vel.add(forward().multiplyScalar(e.deltaY < 0 ? 3.5 : -3.5));
   cam.anim = null;
 });
 addEventListener('keydown', (e) => {
   if (editorOpen()) return;
   lastInput = performance.now();
-  if (e.key === 'Escape') { stepBack(); return; }
+  if (e.key === 'Escape') {
+    if (palette) { closePalette(); return; }
+    stepBack(); return;
+  }
   if (e.key === 'm' || e.key === 'M') { audio.setMuted(!audio.muted); flashHint(audio.muted ? 'muted' : 'sound on'); return; }
   keys.add(e.key.toLowerCase());
   if (['w', 'a', 's', 'd', 'q', 'e'].includes(e.key.toLowerCase())) { cam.anim = null; cam.dock = null; if (cam.level === 'panel') cam.level = 'hub'; }
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+// ---------- node moving ----------
+function setRay(e) {
+  raycaster.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
+}
+// Where the pointer ray meets the hub's vertical cylinder of given radius.
+function rayCylinder(hub, radius) {
+  const o = raycaster.ray.origin, d = raycaster.ray.direction, c = hub.center();
+  const ox = o.x - c.x, oz = o.z - c.z;
+  const a = d.x * d.x + d.z * d.z;
+  if (a < 1e-8) return null;
+  const b = 2 * (ox * d.x + oz * d.z);
+  const q = ox * ox + oz * oz - radius * radius;
+  const disc = b * b - 4 * a * q;
+  if (disc < 0) return null;
+  const s = Math.sqrt(disc);
+  let t = (-b + s) / (2 * a);                 // exit face: what you see from inside the bowl
+  const t0 = (-b - s) / (2 * a);
+  if (q > 0 && t0 > 0) t = t0;                // outside the ring: near face
+  if (t <= 0) return null;
+  const p = o.clone().addScaledVector(d, t);
+  return { theta: Math.atan2(p.z - c.z, p.x - c.x), y: p.y - c.y };
+}
+const wrapAng = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+function beginMove(pg, e) {
+  const p = pg.hit.panel, hub = pg.hit.hub;
+  setRay(e);
+  const at = rayCylinder(hub, p.placement.r);
+  moveDrag = {
+    hub, panel: p, id: p.userData.nodeId,
+    offT: at ? wrapAng(p.placement.theta - at.theta) : 0,
+    offY: at ? p.placement.y - at.y : 0,
+  };
+  dragMode = 'move';
+  audio.tick();
+}
+function doMove(e) {
+  setRay(e);
+  const at = rayCylinder(moveDrag.hub, moveDrag.panel.placement.r);
+  if (at) moveDrag.hub.moveNode(moveDrag.id, at.theta + moveDrag.offT, at.y + moveDrag.offY);
+}
+function endMove() {
+  audio.toggle(true);
+  moveDrag = null;
+}
+
+// ---------- link dragging (rewire / new link / accrete) ----------
+function portSlotAt(hit) {
+  const row = hit.rowInfo.row;
+  if (!row || row.kind !== 'port') return null;
+  const li = Math.min(Math.floor(hit.rowInfo.yFrac * row.lines), row.lines - 1);
+  const s = row.slots[li];
+  const node = hit.hub?.graph.nodes.get(hit.panel.userData?.nodeId);
+  if (!s || !node) return null;
+  const index = s.dir === 'in'
+    ? node.linkInputs.findIndex(x => x.name === s.name)
+    : node.outputs.findIndex(x => x.name === s.name);
+  if (index < 0) return null;
+  return { ...s, index, node };
+}
+
+function beginLink(drag) {
+  linkDrag = drag;
+  dragMode = 'link';
+  drag.A = drag.hub.anchorFor(drag.srcNode, 'out', { srcSlot: drag.srcSlot });
+  if (!drag.A) { linkDrag = null; dragMode = 'look'; return; }
+  drag.drop = drag.A.clone();
+  if (drag.mode === 'retarget') {
+    const b = beams.beams.get(drag.hub.beamKey(drag.linkId));
+    if (b) b.line.visible = false;
+  }
+  beams.addBeam('::drag', drag.A, drag.A.clone(), colorForType(drag.type), { alpha: 0.85, bulge: 0.08, group: '::drag' });
+  for (const p of drag.hub.panels.values()) p.setHint({ type: drag.type, dir: 'in' });
+  audio.tick();
+}
+function doLinkDrag(e) {
+  setRay(e);
+  const dist = Math.max(4, linkDrag.A.distanceTo(camera.position));
+  linkDrag.drop = raycaster.ray.at(dist, new THREE.Vector3());
+  beams.updateBeam('::drag', linkDrag.A, linkDrag.drop);
+}
+function endLink(e) {
+  const drag = linkDrag;
+  linkDrag = null;
+  beams.removeBeam('::drag');
+  for (const p of drag.hub.panels.values()) p.setHint(null);
+  if (drag.mode === 'retarget') {
+    const b = beams.beams.get(drag.hub.beamKey(drag.linkId));
+    if (b) b.line.visible = true;
+  }
+  const hit = pick(e);
+  if (hit && hit.hub === drag.hub && hit.rowInfo?.kind === 'port') {
+    const s = portSlotAt(hit);
+    if (s && s.dir === 'in' && s.type === drag.type) {
+      if (drag.mode === 'new') drag.hub.commitNewLink(drag.srcNode, drag.srcSlot, s.node.id, s.index);
+      else drag.hub.retargetTo(drag.linkId, s.node.id, s.index);
+      return;
+    }
+    return;  // incompatible port: no-op
+  }
+  if (!hit) {
+    if (drag.mode === 'new') openPalette(drag);
+    else { drag.hub.detachLink(drag.linkId); flashHint('link detached'); }
+  }
+}
+
+// ---------- accrete palette: drop a beam into space, pick what grows there ----------
+function openPalette(drag) {
+  closePalette();
+  const candidates = typesAccepting(SCHEMA, drag.type).slice(0, 8);
+  if (!candidates.length) return;
+  const rows = candidates.map(t => buttonRow((SCHEMA[t].display || t).toUpperCase(), () => {
+    const rel = palette.pos.clone().sub(drag.hub.center());
+    const place = { theta: Math.atan2(rel.z, rel.x), r: Math.hypot(rel.x, rel.z), y: rel.y };
+    drag.hub.addNodeAt(t, place, { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type });
+    closePalette();
+  }));
+  const panel = new Panel({ title: 'accrete', subtitle: drag.type, accent: colorForType(drag.type), rows, worldWidth: 3.0, billboard: true });
+  panel.placeFlat(scene, drag.drop);
+  panel.mesh.userData.palette = true;
+  panel.dirty();
+  palette = { panel, pos: drag.drop.clone(), hub: drag.hub };
+  audio.accrete();
+}
+function closePalette() {
+  if (!palette) return;
+  palette.panel.dispose();
+  palette = null;
+}
 
 function pickTargets() {
   const out = [];
@@ -237,6 +399,7 @@ function pickTargets() {
     for (const p of h.panels.values()) if (p.mesh && p.mesh.visible) out.push(p.mesh);
     for (const gi of h.gallery) if (gi.mesh.visible) out.push(gi.mesh);
   }
+  if (palette) out.push(palette.panel.mesh);
   return out;
 }
 
@@ -253,13 +416,18 @@ function pick(e) {
   return { object: h.object, panel, hub, gallery, rowInfo, dist: h.distance, uv: h.uv };
 }
 
-function reachable(hit) { return hit.dist < 10; }
+function reachable(hit) { return hit.dist < 10 || !!hit.object.userData.palette; }
 
 let hotPanel = null;
 function hover(e) {
   const hit = pick(e);
   const interactive = hit && reachable(hit) && hit.rowInfo && isInteractive(hit.rowInfo);
-  canvas.style.cursor = hit ? (interactive ? 'pointer' : 'zoom-in') : 'grab';
+  let cursor = hit ? (interactive ? 'pointer' : 'zoom-in') : 'grab';
+  if (hit && reachable(hit) && hit.hub && hit.panel?.userData?.nodeId != null) {
+    if (hit.rowInfo?.kind === 'header') cursor = 'move';
+    if (hit.rowInfo?.kind === 'port') cursor = 'crosshair';
+  }
+  canvas.style.cursor = cursor;
   const p = hit?.panel || null;
   if (hotPanel && hotPanel !== p) { hotPanel.setHot(null); hotPanel = null; }
   if (p && hit.rowInfo?.row && reachable(hit)) {
@@ -277,6 +445,7 @@ function isInteractive(ri) {
 
 function onClick(e) {
   const hit = pick(e);
+  if (palette && (!hit || hit.panel !== palette.panel)) closePalette();
   if (!hit) return;
   const { panel, hub, gallery, rowInfo } = hit;
   if (gallery) {  // dock to a generation
@@ -387,6 +556,7 @@ function setStatus() {
 }
 
 // ---------- boot ----------
+let SCHEMA = {};
 async function boot() {
   await client.detect();
   setStatus();
@@ -401,12 +571,14 @@ async function boot() {
   const types = new Set();
   for (const { json } of jsons) for (const n of json.nodes || []) types.add(n.type);
   const schema = await client.schemaFor([...types]);
+  SCHEMA = schema;
 
   const N = Math.max(jsons.length, 1);
   jsons.forEach(({ name, json }, i) => {
     const graph = parseWorkflow(json, schema);
     const hub = new Hub(scene, beams, { name, graph }, {
       audio,
+      schema,
       onQueue: (h) => { audio.queueSweep(); client.queue(h); flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : '')); },
       onSave: async (h) => {
         const ok = await client.saveLocalWorkflow(h.name, h.rawWorkflow());
@@ -509,6 +681,10 @@ function tick(dt) {
   for (const h of hubs) {
     h.update(dt, t, cam.pos);
     h.billboards(camera.position);
+  }
+  if (palette) {
+    palette.panel.mesh.lookAt(camera.position);
+    palette.panel.update(t);
   }
 
   // occasional pulse along constellation threads

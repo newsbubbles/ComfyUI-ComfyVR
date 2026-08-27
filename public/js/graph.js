@@ -242,15 +242,116 @@ export function topoLayers(graph) {
   return { depth, layers, angle };
 }
 
-// Serialize the live structure back into the raw litegraph JSON (widget
-// values only for M0 — wiring edits come with M1).
+// Serialize the live structure back into the raw litegraph JSON: widget
+// values, wiring, and node membership. 3D layout overrides live in
+// raw.extra.comfyvr.layout (vanilla ComfyUI preserves unknown extra keys).
 export function syncToRaw(graph) {
   for (const n of graph.raw.nodes || []) {
     const live = graph.nodes.get(n.id);
-    if (!live || !live.schema) continue;
-    n.widgets_values = live.widgets.map(wg => wg.value);
+    if (!live) continue;
+    if (live.schema) n.widgets_values = live.widgets.map(wg => wg.value);
+    for (const inp of n.inputs || []) {
+      const li = live.linkInputs.find(l => l.name === inp.name);
+      if (li) inp.link = li.link;
+    }
+    (n.outputs || []).forEach((o, i) => { o.links = (live.outputs[i]?.links || []).slice(); });
   }
+  graph.raw.links = [...graph.links.values()].map(L => [L.id, L.src, L.srcSlot, L.dst, L.dstSlot, L.type]);
+  graph.raw.last_link_id = Math.max(0, ...graph.links.keys());
+  graph.raw.last_node_id = Math.max(0, ...graph.nodes.keys());
   return graph.raw;
+}
+
+// ------- graph surgery (wiring + node membership) -------
+// All of these keep the three views consistent: graph.links, the src node's
+// outputs[].links, and the dst node's linkInputs[].link.
+
+export function removeLink(graph, id) {
+  const L = graph.links.get(id);
+  if (!L) return;
+  const src = graph.nodes.get(L.src);
+  if (src) {
+    const out = src.outputs[L.srcSlot];
+    if (out) out.links = out.links.filter(x => x !== id);
+  }
+  const dst = graph.nodes.get(L.dst);
+  if (dst) {
+    const inp = dst.linkInputs[L.dstSlot];
+    if (inp && inp.link === id) inp.link = null;
+  }
+  graph.links.delete(id);
+}
+
+// New link src.slot -> dst.slot; an input holds one link, so any existing
+// link on the destination is removed first. Returns the new link (or null).
+export function createLink(graph, srcId, srcSlot, dstId, dstSlot) {
+  const src = graph.nodes.get(srcId), dst = graph.nodes.get(dstId);
+  if (!src || !dst) return null;
+  const type = src.outputs[srcSlot]?.type;
+  if (!type || dst.linkInputs[dstSlot]?.type !== type) return null;
+  const old = dst.linkInputs[dstSlot].link;
+  if (old != null) removeLink(graph, old);
+  const id = Math.max(0, ...graph.links.keys(), graph.raw.last_link_id || 0) + 1;
+  const L = { id, src: srcId, srcSlot, dst: dstId, dstSlot, type };
+  graph.links.set(id, L);
+  src.outputs[srcSlot].links.push(id);
+  dst.linkInputs[dstSlot].link = id;
+  return L;
+}
+
+export function retargetLink(graph, id, dstId, dstSlot) {
+  const L = graph.links.get(id);
+  if (!L) return null;
+  const dst = graph.nodes.get(dstId);
+  if (!dst || dst.linkInputs[dstSlot]?.type !== L.type) return null;
+  if (dstId === L.dst && dstSlot === L.dstSlot) return L;
+  const oldDst = graph.nodes.get(L.dst);
+  if (oldDst && oldDst.linkInputs[L.dstSlot]?.link === id) oldDst.linkInputs[L.dstSlot].link = null;
+  const existing = dst.linkInputs[dstSlot].link;
+  if (existing != null) removeLink(graph, existing);
+  L.dst = dstId; L.dstSlot = dstSlot;
+  dst.linkInputs[dstSlot].link = id;
+  return L;
+}
+
+// Create a node of `type` in both the live graph and the raw JSON.
+export function addNodeToGraph(graph, type, sc) {
+  if (!sc) return null;
+  const id = Math.max(0, ...graph.nodes.keys(), graph.raw.last_node_id || 0) + 1;
+  const widgets = [];
+  const linkInputs = [];
+  for (const inp of sc.inputs) {
+    if (inp.kind === 'link') linkInputs.push({ name: inp.name, type: inp.type, link: null });
+    else {
+      widgets.push({ ...inp, value: defaultFor(inp) });
+      if (inp.wtype === 'seed') {
+        widgets.push({ name: 'control_after_generate', kind: 'widget', wtype: 'combo', options: CONTROL_VALUES, value: 'randomize', skipApi: true });
+      }
+    }
+  }
+  const outputs = sc.outputs.map(t => ({ name: t, type: t, links: [] }));
+  const node = { id, type, title: sc.display, schema: sc, widgets, linkInputs, outputs, hasImage: !!sc.hasImage };
+  graph.nodes.set(id, node);
+  graph.raw.nodes = graph.raw.nodes || [];
+  graph.raw.nodes.push({
+    id, type, pos: [80 * id, 60 * id], size: [320, 200], flags: {}, order: 0, mode: 0,
+    inputs: linkInputs.map(li => ({ name: li.name, type: li.type, link: null })),
+    outputs: outputs.map((o, i) => ({ name: o.name, type: o.type, links: [], slot_index: i })),
+    properties: { 'Node name for S&R': type },
+    widgets_values: widgets.map(w => w.value),
+  });
+  graph.raw.last_node_id = id;
+  return node;
+}
+
+// Node types (from a schema map) that can receive an output of `type`.
+export function typesAccepting(schema, type, excludeType = null) {
+  const out = [];
+  for (const [t, sc] of Object.entries(schema)) {
+    if (t === excludeType) continue;
+    if (sc.inputs.some(i => i.kind === 'link' && i.type === type)) out.push(t);
+  }
+  return out;
 }
 
 // ComfyUI API ("prompt") format: {id: {class_type, inputs}}.

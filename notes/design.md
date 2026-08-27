@@ -61,15 +61,34 @@ the same server (websocket room). Canvas textures may need a resolution
 bump / MSDF for headset legibility. Mobile: touch look + tap dock; a docked
 panel degrades toward a 2D card.
 
+## Graph surgery (M1, shipped)
+
+- **Move**: the panel HEADER is the grab handle (title bar = window manager
+  instinct). Dragging maps the pointer ray onto the node's ring cylinder —
+  theta and height change, the panel keeps facing the centroid axis by
+  construction. Mouse wheel *while holding* pulls the node radially between
+  rings (geometry re-curves to the new radius). Positions persist in
+  raw.extra.comfyvr.layout — vanilla ComfyUI carries the key untouched.
+- **Rewire**: port dots are grabbable within reach. Drag from an OUTPUT dot
+  → a new link seeking an input (an input holds one link, so landing on an
+  occupied input displaces it). Drag a connected INPUT dot → grab that
+  link's end: drop on a compatible input to retarget, drop in space to
+  detach. While dragging, every compatible port in the hub halos.
+- **Accrete**: drop an output-drag into empty space → a palette panel blooms
+  at the drop point listing node types that accept that link type; picking
+  one grows the node there, wired. (Candidates come from the loaded schema
+  for now; full object_info search waits for the phone-keyboard companion.)
+
 ## Milestones
 
-- **M0 (this build)**: server + proxy, constellation + sigils + threads,
+- **M0 (done)**: server + proxy, constellation + sigils + threads,
   amphitheater hubs from real workflow JSON, widget editing, queue, pulses
   (live + demo), gallery ring, sound, LIVE/DEMO status.
-- **M1**: rewiring (drag beam endpoints), node add/delete (object_info
-  search palette), drag-drop of workflow JSON / PNG-with-embedded-workflow
-  into the space (provenance accretion), ComfyUI userdata workflow listing,
-  history back-fill of galleries.
+- **M1 (done)**: node move / rewire / detach / accrete palette, full
+  wiring serialization, layout persistence in extra.comfyvr.
+- **M1.5**: node delete, drag-drop of workflow JSON / PNG-with-embedded-
+  workflow into the space (provenance accretion), ComfyUI userdata workflow
+  listing, history back-fill of galleries, object_info-wide palette search.
 - **M2**: WebXR + phone keyboard companion; multi-client presence.
 
 ## Non-goals (for now)

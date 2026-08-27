@@ -3,7 +3,7 @@
 // per topological depth, panels curved onto the ring cylinder facing the
 // core, beams arcing tier to tier, gallery of generations on the rim.
 import * as THREE from 'three';
-import { topoLayers, colorForType, toApiFormat, randomizeSeeds, syncToRaw } from './graph.js';
+import { topoLayers, colorForType, toApiFormat, randomizeSeeds, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph } from './graph.js';
 import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow } from './panels.js';
 
 const R0 = 7;          // ring 0 radius
@@ -37,6 +37,11 @@ export class Hub {
     let sx = 0, sy = 0;
     for (const a of this.layout.angle.values()) { sx += Math.cos(a); sy += Math.sin(a); }
     this.meanAngle = Math.atan2(sy, sx);
+    // 3D layout overrides (moved/added nodes) persist inside the workflow's
+    // extra field, which vanilla ComfyUI carries along untouched
+    const extra = this.graph.raw.extra = this.graph.raw.extra || {};
+    const cvr = extra.comfyvr = extra.comfyvr || {};
+    this.overrides = cvr.layout = cvr.layout || {};
     this.buildSigil();
   }
 
@@ -69,35 +74,119 @@ export class Hub {
   // ---------- amphitheater (open LOD) ----------
   buildBowl() {
     if (this.panels.size) return;
-    for (const [id, node] of this.graph.nodes) {
-      const d = this.layout.depth.get(id);
-      const theta = this.layout.angle.get(id) ?? 0;
-      const accent = accentFor(node);
-      const rows = [];
-      const inSlots = node.linkInputs.map(li => ({ name: li.name, type: li.type, dir: 'in' }));
-      const outSlots = node.outputs.map(o => ({ name: o.name, type: o.type, dir: 'out' }));
-      const slots = [];
-      for (let i = 0; i < Math.max(inSlots.length, outSlots.length); i++) {
-        if (inSlots[i]) slots.push(inSlots[i]);
-      }
-      for (const s of outSlots) slots.push(s);
-      if (slots.length) rows.push(portRow(slots));
-      for (const wg of node.widgets) rows.push(widgetRow(wg, () => this.onEdited(node)));
-      if (node.type.includes('KSampler')) rows.push(progressRow(() => (this.runningNode === id ? this.progress : 0)));
-      if (node.hasImage) rows.push(imageRow('awaiting generation'));
-      const p = new Panel({ title: node.title, subtitle: `#${id} d${d}`, accent, rows });
-      const r = R0 + d * DR;
-      p.place(this.group, r, theta, d * DY + p.worldHeight() / 2);
-      // tilt ring panels slightly down toward the core
-      p.mesh.rotateX(-0.1 - d * 0.015);
-      p.foldAlpha = 0;
-      p.userData = { nodeId: id, depth: d };
-      p.mesh.userData.hub = this;
-      this.panels.set(id, p);
-      p.dirty();
-    }
+    for (const node of this.graph.nodes.values()) this.buildPanel(node);
     this.buildCore();
     this.buildLinks();
+  }
+
+  buildPanel(node) {
+    const id = node.id;
+    const d = this.layout.depth.get(id) ?? 0;
+    const ov = this.overrides[id];
+    const theta = ov?.theta ?? this.layout.angle.get(id) ?? 0;
+    const r = ov?.r ?? R0 + d * DR;
+    const ringD = Math.max(0, Math.round((r - R0) / DR));
+    const accent = accentFor(node);
+    const rows = [];
+    const slots = [
+      ...node.linkInputs.map(li => ({ name: li.name, type: li.type, dir: 'in' })),
+      ...node.outputs.map(o => ({ name: o.name, type: o.type, dir: 'out' })),
+    ];
+    if (slots.length) rows.push(portRow(slots));
+    for (const wg of node.widgets) rows.push(widgetRow(wg, () => this.onEdited(node)));
+    if (node.type.includes('KSampler')) rows.push(progressRow(() => (this.runningNode === id ? this.progress : 0)));
+    if (node.hasImage) rows.push(imageRow('awaiting generation'));
+    const p = new Panel({ title: node.title, subtitle: `#${id} d${d}`, accent, rows });
+    const y = ov?.y ?? d * DY + p.worldHeight() / 2;
+    p.place(this.group, r, theta, y, -0.1 - ringD * 0.015);
+    p.foldAlpha = 0;
+    p.userData = { nodeId: id, depth: ringD };
+    p.mesh.userData.hub = this;
+    this.panels.set(id, p);
+    p.dirty();
+    return p;
+  }
+
+  // ---------- node moving (panels always face the centroid axis) ----------
+  moveNode(id, theta, y, r = null) {
+    const p = this.panels.get(id);
+    if (!p) return;
+    r = Math.min(Math.max(r ?? p.placement.r, 3.5), this.rimRadius + 8);
+    y = Math.min(Math.max(y, 0.6), this.rimY + 8);
+    p.setPlacement(r, theta, y);
+    this.overrides[id] = { theta: +theta.toFixed(4), y: +y.toFixed(3), r: +r.toFixed(3) };
+    this.refreshNodeBeams(id);
+  }
+
+  refreshNodeBeams(id) {
+    for (const L of this.graph.links.values()) {
+      if (L.src !== id && L.dst !== id) continue;
+      const A = this.anchorFor(L.src, 'out', L), B = this.anchorFor(L.dst, 'in', L);
+      if (A && B) this.beams.updateBeam(this.beamKey(L.id), A, B);
+    }
+  }
+
+  // ---------- wiring surgery ----------
+  addBeamFor(L) {
+    const A = this.anchorFor(L.src, 'out', L), B = this.anchorFor(L.dst, 'in', L);
+    if (A && B) {
+      this.beams.addBeam(this.beamKey(L.id), A, B, colorForType(L.type), {
+        away: this.center().clone(), alpha: 0.4, group: 'hub:' + this.name,
+      });
+    }
+  }
+
+  // Drop beams whose link no longer exists (createLink/retarget displace
+  // whatever previously fed the same input).
+  pruneBeams() {
+    const prefix = `hub:${this.name}:`;
+    for (const key of [...this.beams.beams.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      if (!this.graph.links.has(Number(key.slice(prefix.length)))) this.beams.removeBeam(key);
+    }
+  }
+
+  commitNewLink(srcId, srcSlot, dstId, dstSlot) {
+    const L = createLink(this.graph, srcId, srcSlot, dstId, dstSlot);
+    if (!L) return null;
+    this.pruneBeams();
+    this.addBeamFor(L);
+    this.opts.audio?.toggle(true);
+    return L;
+  }
+
+  retargetTo(linkId, dstId, dstSlot) {
+    const L = retargetLink(this.graph, linkId, dstId, dstSlot);
+    if (!L) return null;
+    this.pruneBeams();
+    const A = this.anchorFor(L.src, 'out', L), B = this.anchorFor(L.dst, 'in', L);
+    if (A && B) this.beams.updateBeam(this.beamKey(L.id), A, B);
+    this.opts.audio?.toggle(true);
+    return L;
+  }
+
+  detachLink(linkId) {
+    removeLink(this.graph, linkId);
+    this.beams.removeBeam(this.beamKey(linkId));
+    this.opts.audio?.toggle(false);
+  }
+
+  // ---------- node adding (palette drop) ----------
+  addNodeAt(type, place, pending = null) {
+    const sc = this.opts.schema?.[type];
+    const node = addNodeToGraph(this.graph, type, sc);
+    if (!node) return null;
+    this.overrides[node.id] = place;
+    const p = this.buildPanel(node);
+    p.foldAlpha = 1;
+    p.mesh.visible = true;
+    if (pending) {
+      const slot = node.linkInputs.findIndex(li => li.type === pending.type && li.link == null);
+      const use = slot >= 0 ? slot : node.linkInputs.findIndex(li => li.type === pending.type);
+      if (use >= 0) this.commitNewLink(pending.srcNode, pending.srcSlot, node.id, use);
+    }
+    this.opts.audio?.accrete();
+    return node;
   }
 
   buildCore() {

@@ -55,9 +55,31 @@ export class BeamSystem {
     const line = new THREE.Line(geo, mat);
     line.renderOrder = 5;
     this.scene.add(line);
-    const beam = { key, pts, line, color: new THREE.Color(colorHex), baseAlpha: alpha, group, len: curveLen(pts) };
+    const beam = { key, pts, line, color: new THREE.Color(colorHex), baseAlpha: alpha, group, len: curveLen(pts), away: away ? away.clone() : null, bulge };
     this.beams.set(key, beam);
     return beam;
+  }
+
+  // Re-route an existing beam in place (node drag, live rewire preview) —
+  // rewrites the polyline into the existing buffer, no reallocation.
+  updateBeam(key, A, B) {
+    const b = this.beams.get(key);
+    if (!b) return;
+    const mid = A.clone().add(B).multiplyScalar(0.5);
+    if (b.away) {
+      const out = mid.clone().sub(b.away);
+      const len = out.length() || 1;
+      mid.add(out.multiplyScalar((A.distanceTo(B) * b.bulge) / len));
+    } else {
+      mid.y += A.distanceTo(B) * b.bulge * 0.4;
+    }
+    const curve = new THREE.QuadraticBezierCurve3(A, mid, B);
+    b.pts = curve.getPoints(SEGS);
+    b.len = curveLen(b.pts);
+    const pos = b.line.geometry.attributes.position;
+    b.pts.forEach((p, i) => pos.setXYZ(i, p.x, p.y, p.z));
+    pos.needsUpdate = true;
+    b.line.geometry.computeBoundingSphere();
   }
 
   removeBeam(key) {

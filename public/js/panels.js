@@ -78,16 +78,29 @@ export class Panel {
   worldHeight() { return this.worldWidth * this.pxH / PW; }
 
   // Curve onto a ring of the hub: radius r, centered at angle theta, height y.
-  place(hubGroup, r, theta, y) {
-    const arc = this.worldWidth / r;
-    this.mesh = new THREE.Mesh(sectorGeometry(r, arc, this.worldHeight()), this.mat);
-    this.mesh.rotation.y = -theta - Math.PI / 2;  // local -Z toward angle theta
-    this.mesh.position.y = y;
+  // Panels always face the ring axis (the hub centroid), so moving a panel
+  // is just re-placing it — orientation follows for free.
+  place(hubGroup, r, theta, y, tilt = 0) {
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.mat);
+    this.mesh.rotation.order = 'YXZ';
+    this.tilt = tilt;
     this.mesh.userData.panel = this;
     this.mesh.renderOrder = 10;
-    this.placement = { r, theta, y, arc };
     hubGroup.add(this.mesh);
+    this.placement = { r: -1, theta, y, arc: 0 };
+    this.setPlacement(r, theta, y);
     return this.mesh;
+  }
+
+  setPlacement(r, theta, y) {
+    const rebuild = Math.abs(r - this.placement.r) > 1e-4;
+    this.placement = { r, theta, y, arc: this.worldWidth / r };
+    if (rebuild) {
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = sectorGeometry(r, this.placement.arc, this.worldHeight());
+    }
+    this.mesh.rotation.set(this.tilt || 0, -theta - Math.PI / 2, 0);  // local -Z toward angle theta
+    this.mesh.position.y = y;
   }
 
   // Flat billboard (core panels, sigils).
@@ -184,11 +197,16 @@ export class Panel {
         r.slots.forEach((s, i) => {
           const yy = y + ROW_H.port * (i + 0.5);
           const c = colorOr(s.type, A);
+          const x = s.dir === 'in' ? PAD - 6 : W - PAD + 6;
+          const hinted = this.hint && this.hint.type === s.type && this.hint.dir === s.dir;
+          if (hinted) {
+            g.strokeStyle = c; g.lineWidth = 2;
+            g.beginPath(); g.arc(x, yy, 9 + 2 * Math.sin(performance.now() / 150), 0, Math.PI * 2); g.stroke();
+          }
           g.fillStyle = c;
           g.beginPath();
-          const x = s.dir === 'in' ? PAD - 6 : W - PAD + 6;
-          g.arc(x, yy, 4.5, 0, Math.PI * 2); g.fill();
-          g.fillStyle = withAlpha(c, 0.8);
+          g.arc(x, yy, hinted ? 6 : 4.5, 0, Math.PI * 2); g.fill();
+          g.fillStyle = withAlpha(c, hinted ? 1 : 0.8);
           g.textAlign = s.dir === 'in' ? 'left' : 'right';
           g.fillText(`${s.name}·${s.type}`, s.dir === 'in' ? PAD + 6 : W - PAD - 6, yy);
           g.textAlign = 'left';
@@ -307,6 +325,11 @@ export class Panel {
 
   setHot(row) { if (this.hot !== row) { this.hot = row; this.dirty(); } }
 
+  setHint(hint) {
+    const same = (!hint && !this.hint) || (hint && this.hint && hint.type === this.hint.type && hint.dir === this.hint.dir);
+    if (!same) { this.hint = hint; this.dirty(); }
+  }
+
   update(t) {
     if (!this.mesh) return;
     const flicker = 0.94 + 0.06 *Oise(t * 7 + this.id * 13.7);
@@ -315,6 +338,7 @@ export class Panel {
   }
 
   foldAlpha = 1;
+  hint = null;
 
   dispose() {
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }

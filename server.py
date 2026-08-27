@@ -24,8 +24,16 @@ WORKFLOWS = ROOT / "workflows"
 SAFE_NAME = re.compile(r"^[\w][\w .()\-]{0,80}$")
 
 
+@web.middleware
+async def nocache_mw(request, handler):
+    # dev tool: never let the browser heuristically cache stale modules
+    resp = await handler(request)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 def app_factory(backend: str) -> web.Application:
-    app = web.Application(client_max_size=64 * 1024 * 1024)
+    app = web.Application(client_max_size=64 * 1024 * 1024, middlewares=[nocache_mw])
     app["backend"] = backend.rstrip("/")
 
     async def on_startup(app):
