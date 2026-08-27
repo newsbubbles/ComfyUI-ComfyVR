@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>comfyvr — substrate</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #01050a; }
+  canvas { display: block; }
+  #hud, #hud * { font-family: Consolas, "Courier New", monospace; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #7ce8dc; }
+  #veil {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: radial-gradient(ellipse at center, rgba(1,5,10,0.35), rgba(1,5,10,0.92));
+    transition: opacity 2.4s ease; opacity: 1;
+  }
+  #veil.gone { opacity: 0; }
+  #veil h1 { font-size: 42px; letter-spacing: 14px; font-weight: normal; margin: 0; text-shadow: 0 0 24px rgba(124,232,220,0.6); }
+  #veil p { opacity: 0.55; letter-spacing: 4px; margin: 0; font-size: 13px; }
+  #status {
+    position: absolute; top: 14px; right: 16px; font-size: 12px; letter-spacing: 1px;
+    padding: 4px 10px; border: 1px solid rgba(124,232,220,0.35); border-radius: 4px;
+    background: rgba(2,10,14,0.6);
+  }
+  #status.live { color: #8effc9; border-color: rgba(142,255,201,0.5); }
+  #status.demo { color: #ffd54a; border-color: rgba(255,213,74,0.4); }
+  #hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 2px; opacity: 0.35; transition: opacity 0.6s;
+    text-align: center; white-space: nowrap;
+  }
+  #err {
+    display: none; position: absolute; top: 10px; left: 10px; max-width: 46em;
+    color: #ff9a9a; background: rgba(40,0,0,0.75); border: 1px solid #a33;
+    padding: 8px 10px; font-size: 12px; white-space: pre-wrap; pointer-events: auto;
+  }
+  #editor {
+    display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
+    background: rgba(1,5,10,0.55); pointer-events: auto;
+  }
+  #editor-box {
+    width: min(680px, 86vw); background: rgba(3,14,18,0.92);
+    border: 1px solid rgba(124,232,220,0.6); border-radius: 8px; padding: 14px;
+    box-shadow: 0 0 40px rgba(124,232,220,0.25);
+  }
+  #editor-label { font-size: 12px; letter-spacing: 2px; opacity: 0.7; margin-bottom: 8px; }
+  #editor-ta {
+    width: 100%; box-sizing: border-box; height: 120px; resize: vertical;
+    background: rgba(0,0,0,0.5); color: #d9fbf4; border: 1px solid rgba(124,232,220,0.35);
+    border-radius: 4px; padding: 8px; font-size: 14px; outline: none;
+  }
+  #editor-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+  #editor-row button {
+    background: rgba(124,232,220,0.12); color: #7ce8dc; border: 1px solid rgba(124,232,220,0.5);
+    border-radius: 4px; padding: 6px 16px; cursor: pointer; letter-spacing: 2px;
+  }
+  #editor-row button:hover { background: rgba(124,232,220,0.28); }
+</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="hud">
+  <div id="err"></div>
+  <div id="status">…</div>
+  <div id="hint"></div>
+  <div id="editor">
+    <div id="editor-box">
+      <div id="editor-label"></div>
+      <textarea id="editor-ta" spellcheck="false"></textarea>
+      <div id="editor-row">
+        <button id="editor-cancel">ESC</button>
+        <button id="editor-ok">COMMIT ⏎</button>
+      </div>
+    </div>
+  </div>
+  <div id="veil">
+    <h1>COMFYVR</h1>
+    <p>a substrate for workflows</p>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

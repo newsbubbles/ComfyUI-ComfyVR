@@ -1,0 +1,282 @@
+// graph.js — litegraph workflow JSON as the single source of truth.
+// Parses it into a live structure panels can render and edit, derives the
+// concentric-ring layout (topological depth), and converts back out to
+// ComfyUI API format for /prompt.
+
+// litegraph's canonical link-type colors, neonized for additive rendering.
+export const LINK_COLORS = {
+  MODEL: '#c5a3ff',
+  CLIP: '#ffd54a',
+  VAE: '#ff7a7a',
+  CONDITIONING: '#ffb04a',
+  LATENT: '#ff9cf9',
+  IMAGE: '#6ec6ff',
+  MASK: '#8ce99a',
+  INT: '#9fb4c0',
+  FLOAT: '#9fb4c0',
+  STRING: '#9fb4c0',
+};
+export function colorForType(t) { return LINK_COLORS[t] || '#7ce8dc'; }
+
+const CONTROL_VALUES = ['fixed', 'increment', 'decrement', 'randomize'];
+const SEED_NAMES = ['seed', 'noise_seed'];
+
+// Minimal schemas for the standard nodes so DEMO mode (no /object_info)
+// still renders real widgets. Shape matches what schemaFromObjectInfo emits.
+// inputs are ordered: link inputs and widgets interleaved exactly as the
+// node declares them, because widgets_values matches by declaration order.
+export const BUILTIN_SCHEMA = {
+  CheckpointLoaderSimple: {
+    display: 'Load Checkpoint',
+    inputs: [w('ckpt_name', 'combo', { options: ['sd_xl_base_1.0.safetensors', 'dreamshaper_8.safetensors'] })],
+    outputs: ['MODEL', 'CLIP', 'VAE'],
+  },
+  LoraLoader: {
+    display: 'Load LoRA',
+    inputs: [
+      l('model', 'MODEL'), l('clip', 'CLIP'),
+      w('lora_name', 'combo', { options: ['add_detail.safetensors'] }),
+      w('strength_model', 'float', { min: -4, max: 4, step: 0.05 }),
+      w('strength_clip', 'float', { min: -4, max: 4, step: 0.05 }),
+    ],
+    outputs: ['MODEL', 'CLIP'],
+  },
+  CLIPTextEncode: {
+    display: 'CLIP Text Encode',
+    inputs: [l('clip', 'CLIP'), w('text', 'text', {})],
+    outputs: ['CONDITIONING'],
+  },
+  EmptyLatentImage: {
+    display: 'Empty Latent',
+    inputs: [
+      w('width', 'int', { min: 64, max: 4096, step: 64 }),
+      w('height', 'int', { min: 64, max: 4096, step: 64 }),
+      w('batch_size', 'int', { min: 1, max: 16, step: 1 }),
+    ],
+    outputs: ['LATENT'],
+  },
+  KSampler: {
+    display: 'KSampler',
+    inputs: [
+      l('model', 'MODEL'), l('positive', 'CONDITIONING'), l('negative', 'CONDITIONING'), l('latent_image', 'LATENT'),
+      w('seed', 'seed', {}),
+      w('steps', 'int', { min: 1, max: 100, step: 1 }),
+      w('cfg', 'float', { min: 0, max: 30, step: 0.1 }),
+      w('sampler_name', 'combo', { options: ['euler', 'euler_ancestral', 'dpmpp_2m', 'dpmpp_2m_sde', 'ddim', 'uni_pc'] }),
+      w('scheduler', 'combo', { options: ['normal', 'karras', 'exponential', 'sgm_uniform', 'simple'] }),
+      w('denoise', 'float', { min: 0, max: 1, step: 0.01 }),
+    ],
+    outputs: ['LATENT'],
+  },
+  LatentUpscale: {
+    display: 'Latent Upscale',
+    inputs: [
+      l('samples', 'LATENT'),
+      w('upscale_method', 'combo', { options: ['nearest-exact', 'bilinear', 'area', 'bicubic', 'bislerp'] }),
+      w('width', 'int', { min: 64, max: 8192, step: 64 }),
+      w('height', 'int', { min: 64, max: 8192, step: 64 }),
+      w('crop', 'combo', { options: ['disabled', 'center'] }),
+    ],
+    outputs: ['LATENT'],
+  },
+  VAEDecode: { display: 'VAE Decode', inputs: [l('samples', 'LATENT'), l('vae', 'VAE')], outputs: ['IMAGE'] },
+  VAEEncode: { display: 'VAE Encode', inputs: [l('pixels', 'IMAGE'), l('vae', 'VAE')], outputs: ['LATENT'] },
+  SaveImage: { display: 'Save Image', inputs: [l('images', 'IMAGE'), w('filename_prefix', 'text', { oneline: true })], outputs: [], hasImage: true },
+  PreviewImage: { display: 'Preview Image', inputs: [l('images', 'IMAGE')], outputs: [], hasImage: true },
+  LoadImage: {
+    display: 'Load Image',
+    inputs: [w('image', 'combo', { options: ['example.png'] })],
+    outputs: ['IMAGE', 'MASK'],
+    hasImage: true,
+  },
+};
+
+function w(name, wtype, cfg) { return { name, kind: 'widget', wtype, ...cfg }; }
+function l(name, type) { return { name, kind: 'link', type }; }
+
+// Convert /object_info entries into the schema shape above, only for the
+// node types we actually need (object_info can be megabytes).
+export function schemaFromObjectInfo(objectInfo, types) {
+  const out = {};
+  for (const t of types) {
+    const info = objectInfo[t];
+    if (!info) continue;
+    const inputs = [];
+    for (const section of ['required', 'optional']) {
+      const sec = (info.input || {})[section];
+      if (!sec) continue;
+      for (const [name, spec] of Object.entries(sec)) {
+        const [ts, cfg] = Array.isArray(spec) ? [spec[0], spec[1] || {}] : [spec, {}];
+        if (Array.isArray(ts)) {
+          inputs.push(w(name, 'combo', { options: ts }));
+        } else if (ts === 'INT') {
+          const seed = SEED_NAMES.includes(name) || cfg.control_after_generate;
+          inputs.push(w(name, seed ? 'seed' : 'int', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 1e9, 1e9), step: cfg.step ?? 1 }));
+        } else if (ts === 'FLOAT') {
+          inputs.push(w(name, 'float', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 100, 1e6), step: cfg.step ?? 0.01 }));
+        } else if (ts === 'STRING') {
+          inputs.push(w(name, 'text', { oneline: !cfg.multiline }));
+        } else if (ts === 'BOOLEAN') {
+          inputs.push(w(name, 'toggle', {}));
+        } else {
+          inputs.push(l(name, ts));
+        }
+      }
+    }
+    out[t] = {
+      display: info.display_name || t,
+      inputs,
+      outputs: (info.output || []).map(o => (Array.isArray(o) ? 'COMBO' : o)),
+      hasImage: !!(info.output_node && /image/i.test(t)) || t === 'LoadImage',
+    };
+  }
+  return out;
+}
+
+// Parse a litegraph workflow into {nodes: Map, links: Map, order: [...]}.
+// Each node: {id, type, title, schema, widgets:[{name,wtype,value,...}],
+// linkInputs:[{name,type,link}], outputs:[{name,type,links:[...]}]}.
+export function parseWorkflow(json, schema) {
+  const nodes = new Map();
+  const links = new Map();
+  for (const L of json.links || []) {
+    links.set(L[0], { id: L[0], src: L[1], srcSlot: L[2], dst: L[3], dstSlot: L[4], type: L[5] });
+  }
+  for (const n of json.nodes || []) {
+    const sc = schema[n.type];
+    const stored = (n.widgets_values || []).slice();
+    const widgets = [];
+    const linkInputs = [];
+    if (sc) {
+      let vi = 0;
+      for (const inp of sc.inputs) {
+        if (inp.kind === 'link') {
+          const declared = (n.inputs || []).find(i => i.name === inp.name);
+          linkInputs.push({ name: inp.name, type: inp.type, link: declared ? declared.link : null });
+        } else {
+          const widget = { ...inp, value: vi < stored.length ? stored[vi] : defaultFor(inp) };
+          vi++;
+          widgets.push(widget);
+          if (inp.wtype === 'seed' && vi < stored.length && CONTROL_VALUES.includes(stored[vi])) {
+            widgets.push({ name: 'control_after_generate', kind: 'widget', wtype: 'combo', options: CONTROL_VALUES, value: stored[vi], skipApi: true });
+            vi++;
+          }
+        }
+      }
+    } else {
+      // Unknown node type: render link inputs from the workflow itself and
+      // widgets as opaque readouts. Still explorable, not editable.
+      for (const i of n.inputs || []) linkInputs.push({ name: i.name, type: i.type, link: i.link });
+      stored.forEach((v, k) => widgets.push({ name: 'value ' + k, kind: 'widget', wtype: 'opaque', value: v }));
+    }
+    const outputs = (n.outputs || []).map(o => ({ name: o.name, type: o.type, links: (o.links || []).filter(id => links.has(id)) }));
+    nodes.set(n.id, {
+      id: n.id, type: n.type,
+      title: n.title || (sc ? sc.display : n.type),
+      schema: sc || null, widgets, linkInputs, outputs,
+      hasImage: !!(sc && sc.hasImage),
+    });
+  }
+  // Drop links whose endpoints are missing (defensive against hand edits).
+  for (const [id, L] of [...links]) {
+    if (!nodes.has(L.src) || !nodes.has(L.dst)) links.delete(id);
+  }
+  return { nodes, links, raw: json };
+}
+
+function defaultFor(inp) {
+  if (inp.wtype === 'combo') return (inp.options || [''])[0];
+  if (inp.wtype === 'text') return '';
+  if (inp.wtype === 'toggle') return false;
+  return inp.min ?? 0;
+}
+
+// Longest-path depth from source nodes -> concentric ring index.
+export function topoLayers(graph) {
+  const depth = new Map();
+  const indeg = new Map();
+  for (const id of graph.nodes.keys()) { depth.set(id, 0); indeg.set(id, 0); }
+  for (const L of graph.links.values()) indeg.set(L.dst, indeg.get(L.dst) + 1);
+  const queue = [...graph.nodes.keys()].filter(id => indeg.get(id) === 0);
+  const seen = [];
+  while (queue.length) {
+    const id = queue.shift();
+    seen.push(id);
+    for (const L of graph.links.values()) {
+      if (L.src !== id) continue;
+      depth.set(L.dst, Math.max(depth.get(L.dst), depth.get(id) + 1));
+      indeg.set(L.dst, indeg.get(L.dst) - 1);
+      if (indeg.get(L.dst) === 0) queue.push(L.dst);
+    }
+  }
+  // Cycles (shouldn't exist in Comfy graphs) fall into layer of last resort.
+  const maxd = Math.max(0, ...depth.values());
+  for (const id of graph.nodes.keys()) if (!seen.includes(id)) depth.set(id, maxd);
+  const layers = [];
+  for (const [id, d] of depth) {
+    (layers[d] = layers[d] || []).push(id);
+  }
+  // Angle placement: sources spread evenly, deeper nodes at the mean angle
+  // of their upstream nodes (reduces beam crossings), nudged apart.
+  const angle = new Map();
+  (layers[0] || []).forEach((id, i) => angle.set(id, (i / layers[0].length) * Math.PI * 2));
+  for (let d = 1; d < layers.length; d++) {
+    for (const id of layers[d] || []) {
+      const ups = [...graph.links.values()].filter(L => L.dst === id).map(L => angle.get(L.src) ?? 0);
+      let a = 0;
+      if (ups.length) {
+        // Circular mean, so angles near 0/2pi average correctly.
+        const sx = ups.reduce((s, u) => s + Math.cos(u), 0), sy = ups.reduce((s, u) => s + Math.sin(u), 0);
+        a = Math.atan2(sy, sx);
+      }
+      angle.set(id, a);
+    }
+    // Spread same-ring collisions.
+    const ring = (layers[d] || []).slice().sort((x, y) => angle.get(x) - angle.get(y));
+    const minGap = (Math.PI * 2) / Math.max(ring.length, 6);
+    for (let i = 1; i < ring.length; i++) {
+      const prev = angle.get(ring[i - 1]), cur = angle.get(ring[i]);
+      if (cur - prev < minGap) angle.set(ring[i], prev + minGap);
+    }
+  }
+  return { depth, layers, angle };
+}
+
+// Serialize the live structure back into the raw litegraph JSON (widget
+// values only for M0 — wiring edits come with M1).
+export function syncToRaw(graph) {
+  for (const n of graph.raw.nodes || []) {
+    const live = graph.nodes.get(n.id);
+    if (!live || !live.schema) continue;
+    n.widgets_values = live.widgets.map(wg => wg.value);
+  }
+  return graph.raw;
+}
+
+// ComfyUI API ("prompt") format: {id: {class_type, inputs}}.
+export function toApiFormat(graph) {
+  const api = {};
+  for (const node of graph.nodes.values()) {
+    if (!node.schema) throw new Error(`no schema for node type ${node.type} — cannot queue`);
+    const inputs = {};
+    for (const wg of node.widgets) {
+      if (wg.skipApi) continue;
+      inputs[wg.name] = wg.value;
+    }
+    for (const li of node.linkInputs) {
+      if (li.link == null) continue;
+      const L = graph.links.get(li.link);
+      if (L) inputs[li.name] = [String(L.src), L.srcSlot];
+    }
+    api[String(node.id)] = { class_type: node.type, inputs };
+  }
+  return api;
+}
+
+export function randomizeSeeds(graph) {
+  for (const node of graph.nodes.values()) {
+    for (const wg of node.widgets) {
+      if (wg.wtype === 'seed') wg.value = Math.floor(Math.random() * 1e15);
+    }
+  }
+}

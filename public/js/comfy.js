@@ -1,0 +1,204 @@
+// comfy.js — one client, two moods. LIVE talks to ComfyUI through the
+// server's /api + /ws proxy; DEMO fabricates the same events from a
+// topological walk so the space works cold. Events route to hubs by
+// prompt_id.
+import { BUILTIN_SCHEMA, schemaFromObjectInfo, topoLayers } from './graph.js';
+
+export class ComfyClient {
+  constructor() {
+    this.mode = 'demo';
+    this.clientId = 'comfyvr-' + Math.random().toString(36).slice(2, 10);
+    this.objectInfo = null;
+    this.prompts = new Map();      // prompt_id -> hub
+    this.currentPrompt = null;     // prompt_id currently executing (ws "executing" lacks it on some events)
+    this.onModeChange = null;
+  }
+
+  async detect() {
+    try {
+      const h = await (await fetch('health')).json();
+      this.backend = h.backend;
+      if (h.live) {
+        this.mode = 'live';
+        this.openSocket();
+      }
+    } catch (e) {
+      this.mode = 'demo';
+    }
+    this.onModeChange?.(this.mode);
+    return this.mode;
+  }
+
+  // Schema for a set of node types: object_info when live, builtins beneath.
+  async schemaFor(types) {
+    let live = {};
+    if (this.mode === 'live') {
+      try {
+        if (!this.objectInfo) this.objectInfo = await (await fetch('api/object_info')).json();
+        live = schemaFromObjectInfo(this.objectInfo, types);
+      } catch (e) {
+        console.warn('object_info failed, using builtins', e);
+      }
+    }
+    return { ...BUILTIN_SCHEMA, ...live };
+  }
+
+  async listLocalWorkflows() {
+    return await (await fetch('local/workflows')).json();
+  }
+
+  async loadLocalWorkflow(name) {
+    return await (await fetch('local/workflows/' + encodeURIComponent(name))).json();
+  }
+
+  async saveLocalWorkflow(name, json) {
+    const r = await fetch('local/workflows/' + encodeURIComponent(name), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(json),
+    });
+    return r.ok;
+  }
+
+  // ---------- live path ----------
+  openSocket() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    this.ws = new WebSocket(`${proto}://${location.host}/ws?clientId=${this.clientId}`);
+    this.ws.binaryType = 'arraybuffer';
+    this.ws.onmessage = (ev) => this.onWsMessage(ev);
+    this.ws.onclose = () => {
+      if (this.mode === 'live') setTimeout(() => this.openSocket(), 3000);
+    };
+  }
+
+  hubFor(promptId) { return this.prompts.get(promptId || this.currentPrompt); }
+
+  async onWsMessage(ev) {
+    if (typeof ev.data !== 'string') {
+      // Binary preview frame: [u32 event][u32 imgType][jpeg/png bytes]
+      const view = new DataView(ev.data);
+      if (view.getUint32(0) !== 1) return;
+      const blob = new Blob([ev.data.slice(8)], { type: view.getUint32(4) === 2 ? 'image/png' : 'image/jpeg' });
+      const bm = await createImageBitmap(blob);
+      this.hubFor(null)?.onPreview(bm);
+      return;
+    }
+    const msg = JSON.parse(ev.data);
+    const d = msg.data || {};
+    const hub = this.hubFor(d.prompt_id);
+    switch (msg.type) {
+      case 'execution_start':
+        this.currentPrompt = d.prompt_id;
+        this.hubFor(d.prompt_id)?.onStatus('running');
+        break;
+      case 'executing':
+        if (d.node === null) { hub?.onExecuting(null); }
+        else hub?.onExecuting(d.node);
+        break;
+      case 'progress':
+        hub?.onProgress(d.value, d.max);
+        break;
+      case 'executed': {
+        if (!hub) break;
+        const imgs = (d.output && d.output.images) || [];
+        const bitmaps = [];
+        for (const im of imgs.slice(0, 4)) {
+          try {
+            const url = `api/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
+            bitmaps.push(await createImageBitmap(await (await fetch(url)).blob()));
+          } catch (e) { console.warn('view fetch failed', e); }
+        }
+        hub.onExecuted(d.node, bitmaps);
+        break;
+      }
+      case 'execution_success':
+      case 'execution_error':
+      case 'execution_interrupted':
+        hub?.onStatus(msg.type === 'execution_success' ? 'done' : 'error');
+        if (d.prompt_id) this.prompts.delete(d.prompt_id);
+        break;
+    }
+  }
+
+  async queue(hub) {
+    if (this.mode !== 'live') return this.demoRun(hub);
+    const body = { prompt: hub.apiPrompt(), client_id: this.clientId };
+    const r = await fetch('api/prompt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.prompt_id) {
+      this.prompts.set(j.prompt_id, hub);
+      hub.onStatus('queued');
+      return j.prompt_id;
+    }
+    hub.onStatus('error');
+    console.warn('queue rejected', j);
+    return null;
+  }
+
+  // ---------- demo path: same events, fabricated ----------
+  async demoRun(hub) {
+    if (hub.status === 'running') return;
+    hub.onStatus('running');
+    const { layers } = topoLayers(hub.graph);
+    const order = layers.flat();
+    for (const id of order) {
+      const node = hub.graph.nodes.get(id);
+      hub.onExecuting(id);
+      if (node.type.includes('KSampler')) {
+        const steps = Number(node.widgets.find(w => w.name === 'steps')?.value || 20);
+        for (let s = 1; s <= steps; s++) {
+          hub.onProgress(s, steps);
+          await sleep(2600 / steps);
+        }
+      } else {
+        await sleep(220 + Math.random() * 260);
+      }
+      const bitmaps = node.hasImage && node.type !== 'LoadImage' ? [demoImage(hub, node)] : [];
+      hub.onExecuted(id, bitmaps);
+    }
+    hub.onExecuting(null);
+    hub.onStatus('done');
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// A procedural "generation": seeded gradient nebula + glyph, substrate-grade.
+export function demoImage(hub, node) {
+  const seed = Number(hub.graph.nodes.values().next().value?.widgets?.[0]?.value) || 1;
+  const rng = mulberry32((hashy(hub.name) ^ seed ^ (Date.now() & 0xffff)) >>> 0);
+  const c = document.createElement('canvas');
+  c.width = c.height = 384;
+  const g = c.getContext('2d');
+  const hue = Math.floor(rng() * 360);
+  const grad = g.createLinearGradient(0, 0, 384, 384);
+  grad.addColorStop(0, `hsl(${hue},70%,12%)`);
+  grad.addColorStop(1, `hsl(${(hue + 80) % 360},80%,22%)`);
+  g.fillStyle = grad; g.fillRect(0, 0, 384, 384);
+  for (let i = 0; i < 26; i++) {
+    const x = rng() * 384, y = rng() * 384, r = 20 + rng() * 130;
+    const bl = g.createRadialGradient(x, y, 0, x, y, r);
+    bl.addColorStop(0, `hsla(${(hue + rng() * 120) | 0},90%,${40 + rng() * 30}%,${0.08 + rng() * 0.14})`);
+    bl.addColorStop(1, 'transparent');
+    g.fillStyle = bl;
+    g.beginPath(); g.arc(x, y, r, 0, 6.29); g.fill();
+  }
+  for (let i = 0; i < 90; i++) {
+    g.fillStyle = `rgba(255,255,255,${0.2 + rng() * 0.6})`;
+    g.fillRect(rng() * 384, rng() * 384, rng() < 0.9 ? 1 : 2, rng() < 0.9 ? 1 : 2);
+  }
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  g.font = '20px Consolas, monospace';
+  g.fillText('DEMO ' + (seed % 100000), 12, 372);
+  return c;
+}
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashy(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) | 0; return h >>> 0; }
