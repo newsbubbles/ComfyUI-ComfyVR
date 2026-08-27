@@ -77,6 +77,19 @@ export class ComfyClient {
     return r.ok;
   }
 
+  async history(maxItems = 64) {
+    if (this.mode !== 'live') return {};
+    try {
+      const r = await fetch('api/history?max_items=' + maxItems);
+      return r.ok ? await r.json() : {};
+    } catch (e) { return {}; }
+  }
+
+  async imageBitmap(im) {
+    const url = `api/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
+    return await createImageBitmap(await (await fetch(url)).blob());
+  }
+
   // ---------- live path ----------
   openSocket() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -120,10 +133,8 @@ export class ComfyClient {
         const imgs = (d.output && d.output.images) || [];
         const bitmaps = [];
         for (const im of imgs.slice(0, 4)) {
-          try {
-            const url = `api/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
-            bitmaps.push(await createImageBitmap(await (await fetch(url)).blob()));
-          } catch (e) { console.warn('view fetch failed', e); }
+          try { bitmaps.push(await this.imageBitmap(im)); }
+          catch (e) { console.warn('view fetch failed', e); }
         }
         hub.onExecuted(d.node, bitmaps);
         break;
@@ -139,7 +150,13 @@ export class ComfyClient {
 
   async queue(hub) {
     if (this.mode !== 'live') return this.demoRun(hub);
-    const body = { prompt: hub.apiPrompt(), client_id: this.clientId };
+    // extra_pnginfo makes the outputs self-describing: every image saved
+    // through comfyvr embeds its workflow, so it can accrete back later
+    const body = {
+      prompt: hub.apiPrompt(),
+      client_id: this.clientId,
+      extra_data: { extra_pnginfo: { workflow: hub.rawWorkflow() } },
+    };
     const r = await fetch('api/prompt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });

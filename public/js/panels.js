@@ -3,6 +3,7 @@
 // cylinder-sector mesh bent onto its ring (inward-facing, additive, no
 // depth). Substrate's renderer, schema-driven instead of accretor-driven.
 import * as THREE from 'three';
+import { colorForType } from './graph.js';
 
 export const PW = 512;                      // canvas px width
 const PAD = 18;
@@ -381,8 +382,8 @@ function withAlpha(hex, a) {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 function colorOr(type, fallback) {
-  const c = { MODEL: '#c5a3ff', CLIP: '#ffd54a', VAE: '#ff7a7a', CONDITIONING: '#ffb04a', LATENT: '#ff9cf9', IMAGE: '#6ec6ff', MASK: '#8ce99a' }[type];
-  return c || fallback;
+  if (!type || type === '*') return fallback;
+  return colorForType(type);
 }
 function clip(g, s, w) {
   s = String(s);

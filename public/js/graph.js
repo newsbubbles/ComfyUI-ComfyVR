@@ -16,7 +16,26 @@ export const LINK_COLORS = {
   FLOAT: '#9fb4c0',
   STRING: '#9fb4c0',
 };
-export function colorForType(t) { return LINK_COLORS[t] || '#7ce8dc'; }
+// Unknown (custom-node) link types get a stable hashed hue instead of the
+// fallback teal, so e.g. NEURO_* wires read as their own color family.
+export function colorForType(t) {
+  if (LINK_COLORS[t]) return LINK_COLORS[t];
+  if (!t || t === '*') return '#7ce8dc';
+  let h = 0;
+  for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return hueHex(Math.abs(h) % 360);
+}
+
+function hueHex(hue) {
+  const s = 0.7, l = 0.68;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + hue / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
 
 const CONTROL_VALUES = ['fixed', 'increment', 'decrement', 'randomize'];
 const SEED_NAMES = ['seed', 'noise_seed'];

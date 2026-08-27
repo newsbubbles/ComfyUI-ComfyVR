@@ -557,6 +557,22 @@ function setStatus() {
 
 // ---------- boot ----------
 let SCHEMA = {};
+
+function hubOpts() {
+  return {
+    audio,
+    schema: SCHEMA,
+    onQueue: (h) => { audio.queueSweep(); client.queue(h); flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : '')); },
+    onSave: async (h) => {
+      // userdata/dropped hubs save a LOCAL copy — never overwrite the
+      // user's real ComfyUI workflows until this serializer has more miles
+      const ok = await client.saveLocalWorkflow(h.name.replace(/[\\/]/g, '_'), h.rawWorkflow());
+      flashHint(ok ? `saved ${h.source !== 'local' ? 'local copy of ' : ''}${h.name}` : 'save FAILED');
+      audio.toggle(ok);
+    },
+  };
+}
+
 async function boot() {
   await client.detect();
   setStatus();
@@ -586,18 +602,7 @@ async function boot() {
   const ringR = Math.max(95, N * 10);
   jsons.forEach(({ name, json, source }, i) => {
     const graph = parseWorkflow(json, schema);
-    const hub = new Hub(scene, beams, { name, graph, source }, {
-      audio,
-      schema,
-      onQueue: (h) => { audio.queueSweep(); client.queue(h); flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : '')); },
-      onSave: async (h) => {
-        // userdata-sourced hubs save a LOCAL copy — never overwrite the
-        // user's real ComfyUI workflows until this serializer has more miles
-        const ok = await client.saveLocalWorkflow(h.name.replace(/[\\/]/g, '_'), h.rawWorkflow());
-        flashHint(ok ? `saved ${h.source === 'comfyui' ? 'local copy of ' : ''}${h.name}` : 'save FAILED');
-        audio.toggle(ok);
-      },
-    });
+    const hub = new Hub(scene, beams, { name, graph, source }, hubOpts());
     const th = (i / N) * Math.PI * 2 - Math.PI / 2;
     hub.setPosition(new THREE.Vector3(Math.cos(th) * ringR, (i % 2) * 8 - 4, Math.sin(th) * ringR));
     hubs.push(hub);
@@ -629,8 +634,128 @@ async function boot() {
 
   $('veil').classList.add('gone');
   flashHint('drag look · wasd/qe drift · shift hurry · click sigils and panels · esc back · m mute');
+
+  backfillHistory().catch((e) => console.warn('history backfill', e));
 }
 boot().catch((e) => fail('boot: ' + (e.stack || e)));
+
+// ---------- history back-fill: past generations find their hubs ----------
+// History entries carry the API prompt they ran; match its (id:class_type)
+// signature against each hub's graph and hang the outputs on the best fit.
+async function backfillHistory() {
+  const hist = await client.history(64);
+  const entries = Object.values(hist);
+  if (!entries.length) return;
+  const sigs = hubs.map(h => {
+    const s = new Set();
+    for (const n of h.graph.nodes.values()) s.add(`${n.id}:${n.type}`);
+    return s;
+  });
+  let recalled = 0;
+  for (const e of entries) {
+    const prompt = e.prompt?.[2];
+    const outputs = e.outputs || {};
+    if (!prompt) continue;
+    const keys = Object.entries(prompt).map(([id, n]) => `${id}:${n.class_type}`);
+    if (!keys.length) continue;
+    let best = -1, bestScore = 0;
+    sigs.forEach((s, i) => {
+      const score = keys.filter(k => s.has(k)).length / keys.length;
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    if (best < 0 || bestScore < 0.7) continue;
+    const hub = hubs[best];
+    if (hub.gallery.length >= 8) continue;
+    for (const out of Object.values(outputs)) {
+      for (const im of out.images || []) {
+        if (im.type !== 'output' || hub.gallery.length >= 8) continue;
+        try {
+          hub.addGeneration(await client.imageBitmap(im));
+          recalled++;
+        } catch (err) { /* image may have been deleted from disk */ }
+      }
+    }
+  }
+  if (recalled) flashHint(`${recalled} generation${recalled > 1 ? 's' : ''} recalled from history`);
+}
+
+// ---------- drop a ComfyUI PNG (or workflow .json) into the space ----------
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', async (e) => {
+  e.preventDefault();
+  for (const f of e.dataTransfer?.files || []) {
+    try { await ingestFile(f); } catch (err) { fail('drop: ' + err); }
+  }
+});
+
+async function ingestFile(f) {
+  if (/\.json$/i.test(f.name)) {
+    const json = JSON.parse(await f.text());
+    if (Array.isArray(json.nodes)) await accreteHub(f.name.replace(/\.json$/i, ''), json, null);
+    else flashHint('json has no nodes — not a workflow');
+    return;
+  }
+  if (f.type === 'image/png' || /\.png$/i.test(f.name)) {
+    const buf = await f.arrayBuffer();
+    const meta = pngTextChunks(buf);
+    const wf = meta.workflow ? JSON.parse(meta.workflow) : null;
+    if (!wf || !Array.isArray(wf.nodes)) { flashHint('no workflow embedded in that png'); return; }
+    const bm = await createImageBitmap(new Blob([buf], { type: 'image/png' }));
+    await accreteHub(f.name.replace(/\.png$/i, ''), wf, bm);
+  }
+}
+
+// Minimal PNG text-chunk reader: tEXt and uncompressed iTXt. ComfyUI
+// embeds the litegraph JSON under the "workflow" keyword.
+function pngTextChunks(buf) {
+  const dv = new DataView(buf);
+  const out = {};
+  if (dv.byteLength < 8 || dv.getUint32(0) !== 0x89504e47) return out;
+  let off = 8;
+  while (off + 12 <= dv.byteLength) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(dv.getUint8(off + 4), dv.getUint8(off + 5), dv.getUint8(off + 6), dv.getUint8(off + 7));
+    if ((type === 'tEXt' || type === 'iTXt') && off + 8 + len <= dv.byteLength) {
+      const data = new Uint8Array(buf, off + 8, len);
+      const nul = data.indexOf(0);
+      if (nul > 0) {
+        const key = new TextDecoder().decode(data.subarray(0, nul));
+        let txt = null;
+        if (type === 'tEXt') {
+          txt = new TextDecoder('latin1').decode(data.subarray(nul + 1));
+        } else if (data[nul + 1] === 0) {  // iTXt, uncompressed only
+          let p = nul + 3;
+          while (p < data.length && data[p] !== 0) p++;
+          p++;
+          while (p < data.length && data[p] !== 0) p++;
+          p++;
+          txt = new TextDecoder().decode(data.subarray(p));
+        }
+        if (txt) out[key] = txt;
+      }
+    }
+    if (type === 'IEND') break;
+    off += 12 + len;
+  }
+  return out;
+}
+
+// A dropped workflow unfolds where you're looking — provenance accretion.
+async function accreteHub(name, json, bitmap) {
+  const missing = [...new Set((json.nodes || []).map(n => n.type))].filter(t => !SCHEMA[t]);
+  if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
+  let base = name.replace(/[\\/]/g, '_') || 'dropped', nm = base, i = 2;
+  while (hubs.some(h => h.name === nm)) nm = `${base}-${i++}`;
+  const graph = parseWorkflow(json, SCHEMA);
+  const hub = new Hub(scene, beams, { name: nm, graph, source: 'dropped' }, hubOpts());
+  hub.setPosition(cam.pos.clone().add(forward().multiplyScalar(70)));
+  hubs.push(hub);
+  if (bitmap) hub.addGeneration(bitmap);
+  audio.accrete();
+  flashHint('accreted ' + nm);
+  flyToHub(hub);
+  return hub;
+}
 
 // ---------- frame loop ----------
 const clock = new THREE.Clock();
@@ -741,5 +866,10 @@ window.CVR = {
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },
-  snap: () => { renderer.render(scene, camera); return renderer.domElement.toDataURL('image/png'); },
+  snap: (w = 1280, h = 760) => {
+    const collapsed = renderer.domElement.width === 0 || renderer.domElement.height === 0;
+    if (collapsed) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+    renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/png');
+  },
 };
