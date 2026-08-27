@@ -17,6 +17,7 @@ export class Hub {
     this.beams = beams;
     this.name = record.name;
     this.graph = record.graph;
+    this.source = record.source || 'local';
     this.opts = opts;            // {audio, onQueue, onSave, onEdit}
     this.group = new THREE.Group();
     scene.add(this.group);
@@ -51,7 +52,7 @@ export class Hub {
   // ---------- sigil (folded LOD) ----------
   buildSigil() {
     this.sigil = new Panel({
-      title: this.name, subtitle: 'workflow', accent: '#7ce8dc', worldWidth: 6.5, billboard: true,
+      title: this.name, subtitle: this.source, accent: '#7ce8dc', worldWidth: 6.5, billboard: true,
       rows: [
         glyphRow(this.glyph, true),
         readoutRow(() => `${this.graph.nodes.size} nodes · ${this.graph.links.size} links`, () => this.status.toUpperCase()),
@@ -249,9 +250,10 @@ export class Hub {
 
   update(dt, t, camPos) {
     // LOD with hysteresis; explicit unfold() also honored.
+    // generous fold-out so a whole tall hub can be admired from outside
     const dist = camPos.distanceTo(this.center());
     if (this.state === 'folded' && dist < this.rimRadius + 26) this.unfold();
-    if (this.state === 'open' && dist > this.rimRadius + 46) this.fold();
+    if (this.state === 'open' && dist > this.rimRadius * 2 + 70) this.fold();
 
     if (this.state === 'unfolding') {
       this.foldT = Math.min(1, this.foldT + dt / 1.4);
@@ -307,6 +309,7 @@ export class Hub {
 
   onExecuting(nodeId) {
     if (nodeId == null) { this.runningNode = null; this.onStatus('idle'); return; }
+    if (this.status !== 'running') this.onStatus('running');  // execution_start can race the /prompt response
     this.runningNode = Number(nodeId);
     this.progress = 0;
     const p = this.panels.get(this.runningNode);

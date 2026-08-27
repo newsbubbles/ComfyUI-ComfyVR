@@ -144,7 +144,7 @@ export function parseWorkflow(json, schema) {
   }
   for (const n of json.nodes || []) {
     const sc = schema[n.type];
-    const stored = (n.widgets_values || []).slice();
+    const stored = Array.isArray(n.widgets_values) ? n.widgets_values.slice() : [];
     const widgets = [];
     const linkInputs = [];
     if (sc) {
@@ -168,6 +168,16 @@ export function parseWorkflow(json, schema) {
       // widgets as opaque readouts. Still explorable, not editable.
       for (const i of n.inputs || []) linkInputs.push({ name: i.name, type: i.type, link: i.link });
       stored.forEach((v, k) => widgets.push({ name: 'value ' + k, kind: 'widget', wtype: 'opaque', value: v }));
+    }
+    // Converted widgets: litegraph can move a widget to a link input (seed
+    // fed by a primitive, etc.) — the input entry carries a `widget` key.
+    // The widget keeps its stored value; the link must render and win at
+    // queue time (toApiFormat writes links after widget values).
+    for (const i of n.inputs || []) {
+      if (!i.widget) continue;
+      if (!linkInputs.some(li => li.name === i.name)) {
+        linkInputs.push({ name: i.name, type: i.type, link: i.link ?? null, converted: true });
+      }
     }
     const outputs = (n.outputs || []).map(o => ({ name: o.name, type: o.type, links: (o.links || []).filter(id => links.has(id)) }));
     nodes.set(n.id, {
@@ -354,11 +364,29 @@ export function typesAccepting(schema, type, excludeType = null) {
   return out;
 }
 
+// Frontend-only node types: they never reach the server. Reroute is a
+// passthrough, PrimitiveNode injects its value into whatever it feeds,
+// Notes are decoration.
+const FRONTEND_ONLY = new Set(['Reroute', 'Note', 'MarkdownNote', 'PrimitiveNode']);
+
+// Follow a link upstream through Reroute chains to the real producer.
+function resolveUpstream(graph, L) {
+  let cur = L, guard = 0;
+  while (cur && guard++ < 64) {
+    const src = graph.nodes.get(cur.src);
+    if (!src || src.type !== 'Reroute') return cur;
+    const upId = src.linkInputs[0]?.link;
+    cur = upId != null ? graph.links.get(upId) : null;
+  }
+  return null;
+}
+
 // ComfyUI API ("prompt") format: {id: {class_type, inputs}}.
 export function toApiFormat(graph) {
   const api = {};
   for (const node of graph.nodes.values()) {
-    if (!node.schema) throw new Error(`no schema for node type ${node.type} — cannot queue`);
+    if (FRONTEND_ONLY.has(node.type)) continue;
+    if (!node.schema) throw new Error(`no schema for node type ${node.type} — is that custom node installed?`);
     const inputs = {};
     for (const wg of node.widgets) {
       if (wg.skipApi) continue;
@@ -366,8 +394,12 @@ export function toApiFormat(graph) {
     }
     for (const li of node.linkInputs) {
       if (li.link == null) continue;
-      const L = graph.links.get(li.link);
-      if (L) inputs[li.name] = [String(L.src), L.srcSlot];
+      let L = graph.links.get(li.link);
+      if (L) L = resolveUpstream(graph, L);
+      if (!L) continue;
+      const src = graph.nodes.get(L.src);
+      if (src?.type === 'PrimitiveNode') { inputs[li.name] = src.widgets[0]?.value; continue; }
+      inputs[li.name] = [String(L.src), L.srcSlot];
     }
     api[String(node.id)] = { class_type: node.type, inputs };
   }

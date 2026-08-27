@@ -565,8 +565,17 @@ async function boot() {
   try { list = await client.listLocalWorkflows(); } catch (e) { fail('workflow list failed: ' + e); }
   const jsons = [];
   for (const item of list) {
-    try { jsons.push({ name: item.name, json: await client.loadLocalWorkflow(item.name) }); }
+    try { jsons.push({ name: item.name, json: await client.loadLocalWorkflow(item.name), source: 'local' }); }
     catch (e) { fail(`load ${item.name}: ${e}`); }
+  }
+  // the user's real workflows, saved server-side by the ComfyUI frontend
+  const userdata = await client.listUserdataWorkflows();
+  for (const item of userdata.slice(0, 12)) {
+    if (jsons.some(j => j.name === item.name)) continue;
+    try {
+      const json = await client.loadUserdataWorkflow(item.path);
+      if (json && Array.isArray(json.nodes) && json.nodes.length) jsons.push({ name: item.name, json, source: 'comfyui' });
+    } catch (e) { console.warn('userdata load failed', item.path, e); }
   }
   const types = new Set();
   for (const { json } of jsons) for (const n of json.nodes || []) types.add(n.type);
@@ -574,20 +583,23 @@ async function boot() {
   SCHEMA = schema;
 
   const N = Math.max(jsons.length, 1);
-  jsons.forEach(({ name, json }, i) => {
+  const ringR = Math.max(95, N * 10);
+  jsons.forEach(({ name, json, source }, i) => {
     const graph = parseWorkflow(json, schema);
-    const hub = new Hub(scene, beams, { name, graph }, {
+    const hub = new Hub(scene, beams, { name, graph, source }, {
       audio,
       schema,
       onQueue: (h) => { audio.queueSweep(); client.queue(h); flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : '')); },
       onSave: async (h) => {
-        const ok = await client.saveLocalWorkflow(h.name, h.rawWorkflow());
-        flashHint(ok ? 'saved ' + h.name : 'save FAILED');
+        // userdata-sourced hubs save a LOCAL copy — never overwrite the
+        // user's real ComfyUI workflows until this serializer has more miles
+        const ok = await client.saveLocalWorkflow(h.name.replace(/[\\/]/g, '_'), h.rawWorkflow());
+        flashHint(ok ? `saved ${h.source === 'comfyui' ? 'local copy of ' : ''}${h.name}` : 'save FAILED');
         audio.toggle(ok);
       },
     });
     const th = (i / N) * Math.PI * 2 - Math.PI / 2;
-    hub.setPosition(new THREE.Vector3(Math.cos(th) * 95, (i % 2) * 8 - 4, Math.sin(th) * 95));
+    hub.setPosition(new THREE.Vector3(Math.cos(th) * ringR, (i % 2) * 8 - 4, Math.sin(th) * ringR));
     hubs.push(hub);
   });
 

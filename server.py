@@ -16,6 +16,7 @@ from pathlib import Path
 
 import aiohttp
 from aiohttp import web
+from yarl import URL
 
 ROOT = Path(__file__).parent
 PUBLIC = ROOT / "public"
@@ -84,9 +85,18 @@ def app_factory(backend: str) -> web.Application:
         return web.json_response({"saved": name, "mtime": int(time.time())})
 
     async def proxy(request):
-        """Forward /api/<path> to the backend as /<path>."""
-        path = request.match_info["path"]
-        url = f"{request.app['backend']}/{path}"
+        """Forward /api/<path> to the backend as /<path>.
+
+        Uses the RAW (still-encoded) path: ComfyUI routes like
+        /userdata/{file} take %2F-encoded slashes inside one segment, which
+        aiohttp's decoded match_info would corrupt into nested paths.
+        """
+        raw_path = request.rel_url.raw_path[len("/api"):]
+        qs = request.rel_url.raw_query_string
+        url = URL(
+            f"{request.app['backend']}{raw_path}" + (f"?{qs}" if qs else ""),
+            encoded=True,
+        )
         data = await request.read() if request.can_read_body else None
         headers = {
             k: v
@@ -97,7 +107,6 @@ def app_factory(backend: str) -> web.Application:
             async with request.app["http"].request(
                 request.method,
                 url,
-                params=request.query,
                 data=data,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=120),

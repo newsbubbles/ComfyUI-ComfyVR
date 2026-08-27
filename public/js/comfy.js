@@ -47,6 +47,25 @@ export class ComfyClient {
     return await (await fetch('local/workflows')).json();
   }
 
+  // Workflows the user saved in the ComfyUI frontend (server-side userdata).
+  async listUserdataWorkflows() {
+    if (this.mode !== 'live') return [];
+    try {
+      const r = await fetch('api/userdata?dir=workflows&recurse=true&split=false');
+      if (!r.ok) return [];
+      const files = await r.json();
+      return files
+        .filter(f => typeof f === 'string' && f.toLowerCase().endsWith('.json'))
+        .map(f => ({ name: f.replace(/\.json$/i, ''), path: 'workflows/' + f }));
+    } catch (e) { return []; }
+  }
+
+  async loadUserdataWorkflow(path) {
+    const r = await fetch('api/userdata/' + encodeURIComponent(path));
+    if (!r.ok) throw new Error('userdata ' + r.status);
+    return await r.json();
+  }
+
   async loadLocalWorkflow(name) {
     return await (await fetch('local/workflows/' + encodeURIComponent(name))).json();
   }
