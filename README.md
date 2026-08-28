@@ -11,7 +11,8 @@ workflow that made them. If the output is a 3D model, you can pull the
 actual mesh out of its thumbnail and walk around it.
 
 Works flat on your monitor. Works in VR with controllers. Works in VR
-with bare hands.
+with bare hands. Tested on a real Quest 2, over wifi, no cable and no
+developer mode needed.
 
 This is the project from [the "Comfy Workflow Universe" post on
 r/comfyui](https://www.reddit.com/r/comfyui/comments/1w0bt1p/comfy_workflow_universe/).
@@ -55,6 +56,12 @@ backend at all so you can explore the space cold.
   panel's title bar to move it. Grab a port dot to rewire or unplug a
   link. Drop a wire into empty space and a palette grows a new node
   there, already connected.
+- **Sane controls**: sliders travel useful ranges (steps sweeps 1 to
+  150, not 1 to 10000), mouse wheel fine-nudges one step at a time,
+  seeds with randomize actually randomize between queues, and stored
+  checkpoint names you do not have snap to ones you do, marked in
+  amber. Notes render in full, and LoadImage shows the image it points
+  at.
 - **Real execution**: queue from inside the space. Websocket events
   drive panel glow, progress bars, live preview at the hub core, and
   finished images flying up to the gallery.
@@ -69,27 +76,27 @@ backend at all so you can explore the space cold.
 ## VR
 
 An `ENTER VR` button appears when a headset runtime is reachable. WebXR
-requires a secure context, so:
+requires a secure context, and there are three ways to get one:
 
+- **Wifi, any standalone headset** (this is how the Quest 2 testing is
+  done: no cable, no developer mode). With ComfyUI running:
+
+  ```
+  pip install aiohttp cryptography
+  python vr.py
+  ```
+
+  It prints an https address. Open that address in the headset browser
+  (same wifi as the PC), accept the certificate warning once (Advanced,
+  then proceed: self-signed is expected, and a warned https page still
+  counts as a secure context), and press `ENTER VR`. If the page never
+  loads, the script prints the exact firewall command to run.
+- **USB** (Quest with developer mode): connect the cable, run
+  `adb reverse tcp:8188 tcp:8188`, then open
+  `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
+  `quest.ps1` does the waiting, the tunnel, and prints the steps.
 - **PCVR** (Rift, Index, WMR on the same machine): open the URL in
   Chrome and click the button. localhost is exempt, nothing to set up.
-- **Quest**: connect USB, run `adb reverse tcp:8188 tcp:8188`, then open
-  `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
-  `quest.ps1` does the waiting, the tunnel, and prints these steps.
-- **Any standalone headset over wifi** (no cable, no developer mode):
-  run the standalone server with https and accept the certificate
-  warning once in the headset browser.
-
-  ```
-  python make_cert.py
-  python server.py --tls --port 8443
-  ```
-
-  Then open `https://<your-pc-ip>:8443` in the headset (the server
-  prints the exact address). The warning screen is expected for a
-  self-signed cert: hit Advanced and proceed. A warned https page still
-  counts as a secure context, which is all WebXR asks for. If the page
-  never loads at all, allow inbound TCP 8443 through your PC firewall.
 
 ### Controls
 
@@ -111,7 +118,7 @@ planned, because typing prompts in VR is nobody's dream.
 
 Early days and moving fast. The most valuable contribution right now is
 **testing on headsets we don't have**. This has been built and verified
-on desktop and is being tested on Quest 2. If you have a Quest 3 or
+on desktop and a Quest 2. If you have a Quest 3 or
 Pro, a Pico, an Index or any PCVR setup, a Vision Pro, anything that
 speaks WebXR: please try it and open an issue with your headset model,
 what worked, and what broke. Hand tracking reports are especially
@@ -122,11 +129,55 @@ live in `notes/design.md` and `notes/RELEASE.md`. The codebase is
 plain ES modules with no build step, on purpose: if you can read it,
 you can patch it.
 
-## Status
+## Limitations, stated plainly
 
-Not yet done: node delete, subgraph execution (they render but refuse to
-queue), proper gaussian splat rendering, voice control, and
-multiplayer presence. The in-headset experience is young. Expect rough
-edges and report them.
+What does not work yet, so you know before you fly:
+
+- **Text entry in VR opens on the monitor.** The prompt editor is a
+  regular browser element and those cannot render inside an immersive
+  session. A message tells you where it went. An in-space keyboard and
+  a phone-as-keyboard companion are the planned fixes.
+- **Subgraphs render but refuse to queue.** You get a readable message
+  instead of a broken run. Flatten them in ComfyUI for now.
+- **You cannot delete a node yet**, or create a workflow from nothing.
+  Editing today means tweaking, rewiring, and growing nodes from
+  dropped wires.
+- **Only your first 12 saved workflows load** into the constellation.
+  A workflow browser is coming.
+- **Galleries forget on ComfyUI restart.** History lives in ComfyUI's
+  memory; recall from the output folder on disk is planned.
+- **Layouts persist only for workflows saved to the local folder.**
+  Your original ComfyUI files are never modified, which also means
+  arrangements of unsaved workflows reset with the tab.
+- **Custom nodes render generically.** Standard widget types (sliders,
+  combos, toggles, text) all work; bespoke frontend widgets from node
+  packs show as plain values.
+- **Gaussian splat PLYs show as point clouds**, not splats.
+- **No back-out gesture in VR yet.** Leave a hub by flying away or
+  pinching another sigil.
+- **Errors are terse.** A failed run turns the hub red but does not yet
+  point at the node that caused it. A full error overhaul is next.
+
+## Roadmap
+
+The goal: the most natural place to run, tend, and remix generative
+workflows, on a screen or standing inside them. In rough order:
+
+- Readable errors on the panel that caused them.
+- Workflow browser: open and close any of your workflows from inside
+  the space, no cap.
+- Layout memory for every workflow, without touching your files.
+- Creating workflows: start an empty one from a template, grow it node
+  by node, save it. Node delete comes with this.
+- Image upload from inside the headset. The browser file picker on
+  Quest reaches headset storage, including your screenshots and
+  downloads, so feeding a LoadImage node from the headset gallery is a
+  real path.
+- In-space keyboard for short fields, phone as keyboard for prompts.
+- A hosted demo you can fly with zero install.
+- Gallery recall across restarts, from the output folder itself.
+- Real gaussian splat rendering.
+- Voice: "load my portrait workflow."
+- Presence: two people in the same constellation.
 
 Built with three.js. Not affiliated with Comfy Org.

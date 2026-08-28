@@ -3,7 +3,7 @@
 // per topological depth, panels curved onto the ring cylinder facing the
 // core, beams arcing tier to tier, gallery of generations on the rim.
 import * as THREE from 'three';
-import { topoLayers, colorForType, toApiFormat, randomizeSeeds, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph } from './graph.js';
+import { topoLayers, colorForType, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph } from './graph.js';
 import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow } from './panels.js';
 
 const R0 = 7;          // ring 0 radius
@@ -55,7 +55,7 @@ export class Hub {
       title: this.name, subtitle: this.source, accent: '#7ce8dc', worldWidth: 6.5, billboard: true,
       rows: [
         glyphRow(this.glyph, true),
-        readoutRow(() => `${this.graph.nodes.size} nodes · ${this.graph.links.size} links`, () => this.status.toUpperCase()),
+        readoutRow(() => `${this.graph.nodes.size} nodes · ${this.graph.links.size} links`, () => this.flashMsg || this.status.toUpperCase()),
       ],
     });
     this.sigil.placeFlat(this.group, new THREE.Vector3(0, 0, 0));
@@ -94,9 +94,15 @@ export class Hub {
       ...node.outputs.map(o => ({ name: o.name, type: o.type, dir: 'out' })),
     ];
     if (slots.length) rows.push(portRow(slots));
-    for (const wg of node.widgets) rows.push(widgetRow(wg, () => this.onEdited(node)));
+    for (const wg of node.widgets) {
+      rows.push(widgetRow(wg, () => {
+        this.onEdited(node);
+        if (wg.imageInput) this.refreshInputImage(node);
+      }));
+    }
     if (node.type.includes('KSampler')) rows.push(progressRow(() => (this.runningNode === id ? this.progress : 0)));
-    if (node.hasImage) rows.push(imageRow('awaiting generation'));
+    const hasInputImage = node.widgets.some(w => w.imageInput);
+    if (node.hasImage || hasInputImage) rows.push(imageRow(hasInputImage ? 'no image selected' : 'awaiting generation'));
     const p = new Panel({ title: node.title, subtitle: `#${id} d${d}`, accent, rows });
     const y = ov?.y ?? d * DY + p.worldHeight() / 2;
     p.place(this.group, r, theta, y, -0.1 - ringD * 0.015);
@@ -105,7 +111,21 @@ export class Hub {
     p.mesh.userData.hub = this;
     this.panels.set(id, p);
     p.dirty();
+    if (hasInputImage) this.refreshInputImage(node);
     return p;
+  }
+
+  // Show the file an input-image combo (LoadImage etc.) points at, straight
+  // from the server's input dir. LoadImage never executes an output image,
+  // so without this the panel stays blank forever.
+  async refreshInputImage(node) {
+    const wg = node.widgets.find(w => w.imageInput);
+    if (!wg || !wg.value || !this.opts.loadInputImage) return;
+    const bm = await Promise.resolve(this.opts.loadInputImage(String(wg.value))).catch(() => null);
+    if (!bm) return;
+    const p = this.panels.get(node.id);
+    const imRow = p?.rows.find(r => r.kind === 'image');
+    if (imRow) { imRow.img = bm; p.dirty(); }
   }
 
   // ---------- node moving (panels always face the centroid axis) ----------
@@ -192,7 +212,7 @@ export class Hub {
 
   buildCore() {
     const rows = [
-      readoutRow(() => `depth ${this.maxDepth + 1} · ${this.graph.nodes.size} nodes`, () => this.status.toUpperCase()),
+      readoutRow(() => `depth ${this.maxDepth + 1} · ${this.graph.nodes.size} nodes`, () => this.flashMsg || this.status.toUpperCase()),
       progressRow(() => this.progress),
       buttonRow('◈ QUEUE', () => this.opts.onQueue(this)),
       buttonRow('⟳ RESEED · SAVE ⬡', (frac) => (frac < 0.5 ? this.reseed() : this.opts.onSave(this))),
@@ -409,6 +429,21 @@ export class Hub {
   onEdited(node) { this.opts.onEdit?.(this, node); }
 
   reseed() { randomizeSeeds(this.graph); for (const p of this.panels.values()) p.dirty(); this.opts.audio?.toggle(true); }
+
+  // A queued prompt used the current seeds; move the widgets on per their
+  // control_after_generate so the next queue is a fresh execution.
+  afterQueued() {
+    if (applySeedControls(this.graph)) for (const p of this.panels.values()) p.dirty();
+  }
+
+  // Transient message on the core panel and sigil readouts (visible in XR,
+  // where the DOM hint line does not exist).
+  flash(msg, ms = 3500) {
+    this.flashMsg = msg;
+    clearTimeout(this._flashTimer);
+    this._flashTimer = setTimeout(() => { this.flashMsg = null; this.corePanel?.dirty(); this.sigil?.dirty(); }, ms);
+    this.corePanel?.dirty(); this.sigil?.dirty();
+  }
 
   apiPrompt() { return toApiFormat(this.graph); }
   rawWorkflow() { return syncToRaw(this.graph); }

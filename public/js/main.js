@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, typesAccepting, colorForType } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow } from './panels.js';
+import { Panel, pumpRedraws, PW, buttonRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets } from './comfy.js';
@@ -268,6 +268,27 @@ canvas.addEventListener('wheel', (e) => {
     audio.zip(Math.min(1, p.placement.r / 40));
     return;
   }
+  // wheel over a slider = fine nudge, one step per notch (shift = 10 steps)
+  if (dragMode === null) {
+    const hit = pick(e);
+    const ri = hit?.rowInfo;
+    if (ri?.kind === 'slider' && ri.row?.widget) {
+      const row = ri.row, wg = row.widget;
+      const dir = e.deltaY < 0 ? 1 : -1;
+      const step = (row.step || (row.int ? 1 : 0.01)) * (e.shiftKey ? 10 : 1);
+      let v = (Number(wg.value) || 0) + dir * step;
+      if (row.int) v = Math.round(v);
+      else v = Number(v.toFixed(4));
+      v = THREE.MathUtils.clamp(v, row.hardMin ?? row.min, row.hardMax ?? row.max);
+      if (v !== wg.value) {
+        wg.value = v;
+        audio.tick();
+        row.onChange?.();
+        hit.panel.dirty();
+      }
+      return;
+    }
+  }
   cam.vel.add(forward().multiplyScalar(e.deltaY < 0 ? 3.5 : -3.5));
   cam.anim = null;
 });
@@ -508,6 +529,7 @@ function interact(panel, hub, ri) {
       const dir = cx < (PW - 36) * 0.4 ? -1 : 1;
       const i = Math.max(0, opts.indexOf(wg.value));
       wg.value = opts[(i + dir + opts.length) % opts.length];
+      delete wg.substituted;   // a deliberate pick clears the auto-sub marker
       audio.toggle(dir > 0); row.onChange?.(); panel.dirty();
       break;
     }
@@ -534,10 +556,11 @@ function applySliderFrac(panel, row, frac) {
   // slider bar spans px 196..398 of the canvas
   const cx = (frac ?? 0) * (PW - 36) + 18;
   const f = THREE.MathUtils.clamp((cx - 196) / 202, 0, 1);
-  let v = row.min + f * (row.max - row.min);
+  let v = sliderValue(row, f);
   if (row.step) v = Math.round(v / row.step) * row.step;
   if (row.int) v = Math.round(v);
   else v = Number(v.toFixed(4));
+  v = THREE.MathUtils.clamp(v, row.hardMin ?? row.min, row.hardMax ?? row.max);
   if (v !== wg.value) {
     wg.value = v;
     audio.zip(f);
@@ -557,6 +580,9 @@ function openEditor(panel, row) {
   editorWrap.style.display = 'flex';
   editorTa.focus(); editorTa.select();
   audio.tick();
+  // the editor is DOM: it cannot render inside an immersive session, so
+  // tell the user in-space where it went instead of appearing dead
+  if (renderer.xr.isPresenting) panel.mesh?.userData?.hub?.flash('TEXT EDITOR IS ON THE MONITOR');
 }
 function closeEditor(commit) {
   if (commit && editorCtx) {
@@ -597,10 +623,13 @@ function hubOpts() {
   return {
     audio,
     schema: SCHEMA,
+    loadInputImage: (filename) =>
+      client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onQueue: async (h) => {
       audio.queueSweep();
       try {
         await client.queue(h);
+        h.afterQueued();   // the queued run has its seeds; move them on
         flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
       } catch (e) {
         h.onStatus('error');

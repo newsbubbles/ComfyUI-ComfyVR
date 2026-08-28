@@ -9,6 +9,38 @@ export const PW = 512;                      // canvas px width
 const PAD = 18;
 export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24 };
 const FONT = (px, bold) => `${bold ? 'bold ' : ''}${px}px Consolas, "Courier New", monospace`;
+const NOTE_MAX_LINES = 40;
+
+// Schema ranges are validation bounds, not sensible travel: KSampler steps
+// declares max 10000, which makes one slider pixel worth ~50 steps. Curated
+// soft ranges give common widgets a usable sweep (the range still expands to
+// include whatever value the workflow stored, and fine-nudge can go beyond).
+const SOFT_RANGES = {
+  steps: [1, 150], cfg: [0, 30], guidance: [0, 30],
+  width: [64, 2048], height: [64, 2048], crop_w: [0, 2048], crop_h: [0, 2048],
+  batch_size: [1, 16], start_at_step: [0, 150], end_at_step: [0, 150],
+  strength: [-2, 3], strength_model: [-4, 4], strength_clip: [-4, 4],
+};
+
+// Slider value <-> bar fraction, in one place so drawing and input agree.
+// Uncurated ranges spanning more than ~3 decades map through log space
+// (multiplicative quantities want log distance).
+export function sliderFrac(r, v) {
+  if (r.log) {
+    const lo = Math.log(Math.max(r.min, r.logFloor)), hi = Math.log(Math.max(r.max, r.logFloor));
+    return clamp01((Math.log(Math.max(Number(v) || 0, r.logFloor)) - lo) / (hi - lo || 1));
+  }
+  return clamp01((v - r.min) / (r.max - r.min || 1));
+}
+export function sliderValue(r, f) {
+  if (r.log) {
+    const lo = Math.log(Math.max(r.min, r.logFloor)), hi = Math.log(Math.max(r.max, r.logFloor));
+    return Math.exp(lo + clamp01(f) * (hi - lo));
+  }
+  return r.min + clamp01(f) * (r.max - r.min);
+}
+
+const measure = document.createElement('canvas').getContext('2d');
 
 const redrawQueue = new Set();
 export function pumpRedraws(t, budget = 4) {
@@ -74,7 +106,22 @@ export class Panel {
     this.dirty();
   }
 
-  rowH(r) { return r.kind === 'port' ? ROW_H.port * r.lines : (r.kind === 'text' && r.oneline ? ROW_H.textline : ROW_H[r.kind] || 30); }
+  rowH(r) {
+    if (r.kind === 'port') return ROW_H.port * r.lines;
+    if (r.kind === 'text' && r.oneline) return ROW_H.textline;
+    if (r.kind === 'note') {
+      // full note body: height follows the wrapped text, computed once
+      if (r._h == null) {
+        measure.font = FONT(14);
+        const lines = wrapText(measure, String(r.get() || ''), PW - 2 * PAD);
+        r._lines = lines.slice(0, NOTE_MAX_LINES);
+        r._more = lines.length - r._lines.length;
+        r._h = 26 + Math.max(1, r._lines.length + (r._more > 0 ? 1 : 0)) * 18 + 8;
+      }
+      return r._h;
+    }
+    return ROW_H[r.kind] || 30;
+  }
 
   worldHeight() { return this.worldWidth * this.pxH / PW; }
 
@@ -218,7 +265,7 @@ export class Panel {
         label(r.name);
         const x0 = 196, x1 = W - PAD - 96;
         if (r.kind === 'slider') {
-          const f = clamp01((r.get() - r.min) / (r.max - r.min || 1));
+          const f = sliderFrac(r, r.get());
           g.strokeStyle = withAlpha(A, 0.35); g.lineWidth = 2;
           line(g, x0, mid, x1, mid);
           g.strokeStyle = A; g.lineWidth = 3;
@@ -242,8 +289,11 @@ export class Panel {
         g.fillStyle = withAlpha(A, 0.8);
         g.textAlign = 'center';
         g.fillText('◂', 206, mid); g.fillText('▸', W - PAD - 10, mid);
-        g.fillStyle = '#e8fffb'; g.font = FONT(15, true);
-        g.fillText(clip(g, String(r.get()), W - PAD - 10 - 216 - 16), (216 + W - PAD - 20) / 2, mid);
+        // amber = value auto-substituted (the stored one wasn't on the server)
+        const subbed = !!r.widget?.substituted;
+        g.fillStyle = subbed ? '#ffd54a' : '#e8fffb';
+        g.font = FONT(15, true);
+        g.fillText(clip(g, (subbed ? '≈ ' : '') + String(r.get()), W - PAD - 10 - 216 - 16), (216 + W - PAD - 20) / 2, mid);
         g.textAlign = 'left';
         break;
       }
@@ -262,10 +312,23 @@ export class Panel {
         g.fillText(r.name.toUpperCase(), PAD, y + 12);
         g.fillStyle = '#d9fbf4';
         g.font = FONT(14);
-        const lines = wrap(g, String(r.get() || '·'), W - 2 * PAD);
+        const lines = wrapText(g, String(r.get() || '·'), W - 2 * PAD);
         const maxLines = r.oneline ? 1 : 3;
         lines.slice(0, maxLines).forEach((ln, i) => g.fillText(i === maxLines - 1 && lines.length > maxLines ? ln.slice(0, -1) + '…' : ln, PAD, y + 30 + i * 18));
         if (hot) { g.fillStyle = withAlpha(A, 0.8); g.font = FONT(11); g.textAlign = 'right'; g.fillText('[edit]', W - PAD, y + 12); g.textAlign = 'left'; }
+        break;
+      }
+      case 'note': {
+        g.fillStyle = withAlpha(A, 0.55);
+        g.font = FONT(12);
+        g.fillText(r.name.toUpperCase(), PAD, y + 12);
+        g.fillStyle = '#d9fbf4';
+        g.font = FONT(14);
+        (r._lines || []).forEach((ln, i) => g.fillText(ln, PAD, y + 30 + i * 18));
+        if (r._more > 0) {
+          g.fillStyle = withAlpha(A, 0.5);
+          g.fillText(`… ${r._more} more lines`, PAD, y + 30 + (r._lines?.length || 0) * 18);
+        }
         break;
       }
       case 'button': {
@@ -352,12 +415,26 @@ export class Panel {
 export function widgetRow(wg, onChange) {
   const base = { name: wg.name, get: () => wg.value, widget: wg, onChange };
   switch (wg.wtype) {
-    case 'int': case 'float':
-      return { ...base, kind: 'slider', min: wg.min ?? 0, max: wg.max ?? 100, step: wg.step ?? (wg.wtype === 'int' ? 1 : 0.01), int: wg.wtype === 'int' };
+    case 'int': case 'float': {
+      const isInt = wg.wtype === 'int';
+      const step = wg.step ?? (isInt ? 1 : 0.01);
+      const hardMin = wg.min ?? 0, hardMax = wg.max ?? 100;
+      let [lo, hi] = SOFT_RANGES[wg.name] || [hardMin, hardMax];
+      lo = Math.max(hardMin, lo); hi = Math.min(hardMax, hi);
+      if (hi <= lo) { lo = hardMin; hi = hardMax; }
+      const v = Number(wg.value);
+      if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      const log = !SOFT_RANGES[wg.name] && lo >= 0 && hi / Math.max(lo, step, 1e-9) > 1000;
+      return {
+        ...base, kind: 'slider', min: lo, max: hi, hardMin, hardMax, step, int: isInt,
+        log, logFloor: Math.max(step, isInt ? 1 : 1e-4),
+      };
+    }
     case 'seed': return { ...base, kind: 'seed' };
     case 'combo': return { ...base, kind: 'combo', options: wg.options || [] };
     case 'toggle': return { ...base, kind: 'toggle' };
     case 'text': return { ...base, kind: 'text', oneline: !!wg.oneline };
+    case 'note': return { ...base, kind: 'note' };
     default: return { ...base, kind: 'opaque' };
   }
 }
@@ -399,6 +476,15 @@ function wrap(g, s, w) {
     else cur = test;
   }
   if (cur) out.push(cur);
+  return out;
+}
+// Paragraph-aware wrapping: blank lines and line breaks survive.
+function wrapText(g, s, w) {
+  const out = [];
+  for (const para of String(s).split(/\r?\n/)) {
+    if (!para.trim()) { out.push(''); continue; }
+    out.push(...wrap(g, para, w));
+  }
   return out;
 }
 function fmtVal(v) {

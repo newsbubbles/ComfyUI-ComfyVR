@@ -104,7 +104,7 @@ export const BUILTIN_SCHEMA = {
   PreviewImage: { display: 'Preview Image', inputs: [l('images', 'IMAGE')], outputs: [], hasImage: true },
   LoadImage: {
     display: 'Load Image',
-    inputs: [w('image', 'combo', { options: ['example.png'] })],
+    inputs: [w('image', 'combo', { options: ['example.png'], imageInput: true })],
     outputs: ['IMAGE', 'MASK'],
     hasImage: true,
   },
@@ -127,7 +127,9 @@ export function schemaFromObjectInfo(objectInfo, types) {
       for (const [name, spec] of Object.entries(sec)) {
         const [ts, cfg] = Array.isArray(spec) ? [spec[0], spec[1] || {}] : [spec, {}];
         if (Array.isArray(ts)) {
-          inputs.push(w(name, 'combo', { options: ts }));
+          // image_upload combos (LoadImage and friends) pick files from the
+          // input dir; panels preview them via /view?type=input
+          inputs.push(w(name, 'combo', { options: ts, imageInput: !!cfg.image_upload }));
         } else if (ts === 'INT') {
           const seed = SEED_NAMES.includes(name) || cfg.control_after_generate;
           inputs.push(w(name, seed ? 'seed' : 'int', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 1e9, 1e9), step: cfg.step ?? 1 }));
@@ -147,6 +149,7 @@ export function schemaFromObjectInfo(objectInfo, types) {
       inputs,
       outputs: (info.output || []).map(o => (Array.isArray(o) ? 'COMBO' : o)),
       hasImage: !!(info.output_node && /image/i.test(t)) || t === 'LoadImage',
+      liveOptions: true,  // combo options came from the running server, safe to snap against
     };
   }
   return out;
@@ -182,6 +185,15 @@ export function parseWorkflow(json, schema) {
         } else {
           const widget = { ...inp, value: vi < stored.length ? stored[vi] : defaultFor(inp) };
           vi++;
+          // A stored combo value the server no longer offers (someone else's
+          // checkpoint names, a deleted input file) would fail /prompt
+          // validation. Snap to the first real option and mark it, but only
+          // against options that came from a live object_info.
+          if (sc.liveOptions && inp.wtype === 'combo' && Array.isArray(inp.options) && inp.options.length
+              && !inp.options.includes(widget.value)) {
+            widget.value = inp.options[0];
+            widget.substituted = true;
+          }
           widgets.push(widget);
           if (inp.wtype === 'seed' && vi < stored.length && CONTROL_VALUES.includes(stored[vi])) {
             widgets.push({ name: 'control_after_generate', kind: 'widget', wtype: 'combo', options: CONTROL_VALUES, value: stored[vi], skipApi: true });
@@ -189,6 +201,10 @@ export function parseWorkflow(json, schema) {
           }
         }
       }
+    } else if (n.type === 'Note' || n.type === 'MarkdownNote') {
+      // Notes are frontend-only decoration; the body is widgets_values[0].
+      // Render the whole thing, not a clipped readout.
+      widgets.push({ name: n.type === 'MarkdownNote' ? 'markdown' : 'note', kind: 'widget', wtype: 'note', value: String(stored[0] ?? '') });
     } else {
       // Unknown node type: render link inputs from the workflow itself and
       // widgets as opaque readouts. Still explorable, not editable.
@@ -440,4 +456,24 @@ export function randomizeSeeds(graph) {
       if (wg.wtype === 'seed') wg.value = Math.floor(Math.random() * 1e15);
     }
   }
+}
+
+// Apply each seed's control_after_generate once a prompt has been queued
+// (the queued run uses the current seed; the widget then moves on). Without
+// this, an untouched re-queue is byte-identical and ComfyUI's output cache
+// executes nothing.
+export function applySeedControls(graph) {
+  let changed = false;
+  for (const node of graph.nodes.values()) {
+    for (let i = 1; i < node.widgets.length; i++) {
+      const wg = node.widgets[i];
+      if (wg.name !== 'control_after_generate') continue;
+      const seed = node.widgets[i - 1];
+      if (!seed || seed.wtype !== 'seed') continue;
+      if (wg.value === 'randomize') { seed.value = Math.floor(Math.random() * 1e15); changed = true; }
+      else if (wg.value === 'increment') { seed.value = (Number(seed.value) || 0) + 1; changed = true; }
+      else if (wg.value === 'decrement') { seed.value = Math.max(0, (Number(seed.value) || 0) - 1); changed = true; }
+    }
+  }
+  return changed;
 }
