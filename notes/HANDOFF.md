@@ -65,37 +65,81 @@ Known gaps, in priority order:
   option list to the first available option, and mark the widget
   visually as auto-substituted.
 
-## Next up (agreed priorities)
+## Next up: Spike 1, "the first five minutes"
 
-Revised after the field report and the public traction. New order:
+Goal: a stranger with a headset gets from git clone to flying and
+generating without reading anything, and the things they touch first
+all behave. Concrete items, roughly in build order:
 
-1. **First-five-minutes fixes.** Slider soft ranges + log mapping +
-   fine nudge; full-text note panels; snap stale combo values to the
-   first available option (the sample workflows reference checkpoints
-   strangers do not have, and queueing fails validation until they
-   cycle the combo, which is the most likely first failure a new
-   install hits); in-XR hint for the text editor.
-2. **Creature comforts.** A workflow browser panel to open and close
-   workflows (replaces the arbitrary 12-workflow cap); layout
-   persistence for userdata workflows. Layouts live in
-   `extra.comfyvr.layout` and persist only when a workflow is saved to
-   the local folder; userdata workflows are read-only by design, so
-   their layouts die with the tab. Plan: a sidecar layout store (local
-   `layouts/` keyed by workflow source + name) written automatically on
-   layout edit and merged at load. Node delete belongs here too, and a
-   back-out gesture for VR (Esc is desktop-only).
-3. **Error handling overhaul** (design below, unchanged).
-4. **Hosted demo page** (gate 5): the discord audience can fly before
-   installing.
-5. **Widget coverage research**: inventory `/object_info` widget and
-   input types across popular node packs (Impact, rgthree, WAS,
-   ComfyUI-Manager installs) and bucket them: works generically now,
-   needs text entry, needs a file/image picker (LoadImage image combo +
-   upload), needs a bespoke widget. Turns "will my nodes work" into a
-   table instead of a shrug.
-6. **Deeper gallery recall** (design below, unchanged).
+1. **`vr.py` one-command start**: makes the cert if missing, starts
+   the https server, prints the exact `https://<lan-ip>:<port>`
+   address plus the three headset steps, and prints the firewall
+   command to run if the port looks closed. README quickstart gains a
+   "VR in one command" block. This is the productized version of what
+   getting the Quest 2 online actually took.
+2. **Seed controls act.** `control_after_generate` is parsed and
+   displayed but nothing applies it at queue time, so re-queueing an
+   untouched workflow sends a byte-identical prompt and ComfyUI's
+   output cache executes nothing. That is the "queue does nothing"
+   report. On queue: use the current seed, then apply randomize /
+   increment / decrement to the widget and repaint the panel.
+3. **LoadImage panels show their image.** Nodes with an input-file
+   combo fetch `/view?filename=...&type=input` on parse and on every
+   combo change into the panel image slot. Verify the selected name
+   actually lands in the API prompt. Upload button deferred.
+4. **Slider ranges**: curated soft ranges (steps, width, height, cfg,
+   denoise), log mapping when max/min exceeds about 1000, fine nudge
+   (wheel on desktop, stick flick in XR).
+5. **Note and MarkdownNote full-text panels** (kill the 3-line clamp).
+6. **Snap stale combo values** to the first available option, marked
+   visually as substituted (the sample workflows reference checkpoints
+   strangers do not have; queueing fails validation until they cycle
+   the combo).
+7. **In-XR hint when the text editor opens** (it opens on the monitor;
+   say so in-space instead of appearing dead).
 
-### 3. Error handling overhaul (design)
+Tests for the next headset session, in order: queue twice without
+touching anything and expect two different images in the gallery;
+cycle LoadImage through three files and expect the panel preview to
+follow and the generation to use the third; drag the steps slider and
+expect single-step control; open a long markdown note and read all of
+it; fresh-clone first run without the sample checkpoints and expect a
+marked substitution instead of a validation error.
+
+## Spike 2 (queued behind spike 1)
+
+Creature comforts and robustness: a workflow browser panel to open and
+close workflows (kills the 12-workflow cap); a layout sidecar store
+for userdata workflows (layouts currently persist only via local
+saves; userdata stays read-only, so store layouts in a local
+`layouts/` dir keyed by source + name, written on layout edit, merged
+at load); node delete; a VR back-out gesture (Esc is desktop-only);
+then the error handling overhaul (design below). The hosted demo page
+(design below) rides whenever a gap opens. Widget coverage research
+(below) feeds both spikes.
+
+## Editing scope (position, not backlog)
+
+How much of the ComfyUI interface is this trying to be? Position: all
+of the RUN loop and most of the REMIX loop, not a clone of the 2D
+authoring canvas. Inhabiting, running, tweaking, rewiring, growing
+nodes from dropped wires, and remixing PNGs into hubs are the product.
+Building a dense 40-node workflow from a blank floor is what the 2D
+editor is for, and every file stays round-trippable so people can hop
+between the two freely. The authoring ladder we do climb, in order:
+node delete, palette open anywhere (search all node types, not just
+link-compatible ones), then a new-empty-workflow hub seeded from a
+template. Anything past that has to earn its place in VR terms.
+
+### Widget coverage research
+
+Inventory `/object_info` widget and input types across popular node
+packs (Impact, rgthree, WAS, common ComfyUI-Manager installs) and
+bucket them: works generically now, needs text entry, needs a
+file/image picker, needs a bespoke widget. Turns "will my nodes work"
+into a table instead of a shrug.
+
+### Error handling overhaul (design)
 
 Now public, and error surfacing is ad hoc: some paths `fail()` into the
 error box, some `flashHint()`, some `console.warn`, and two real
@@ -128,14 +172,14 @@ Plan:
 - Keep the rule from day one: a failure in one hub must never break the
   space, and a failure in route registration must never break ComfyUI.
 
-### 4. Hosted demo page (gate 5, design)
+### Hosted demo page (gate 5, design)
 
 Demo mode needs a static fallback for the sample workflows (they are
 currently fetched from the server; embed them or fetch-with-fallback)
 and then the `public/` folder minus proxy runs on GitHub Pages. Link it
 from the README so people can fly before installing.
 
-### 6. Deeper gallery recall (design)
+### Deeper gallery recall (design)
 
 ComfyUI `/history` is in-memory and dies with the server. Scan the
 output directory PNGs for embedded workflow metadata instead (we
