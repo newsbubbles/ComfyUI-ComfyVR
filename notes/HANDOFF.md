@@ -3,6 +3,38 @@
 Orientation for the next work session or contributor. State as of
 2026-08-28, just after the public push.
 
+## Quest 2 field report (2026-08-28, first in-headset session)
+
+Release gate 1 passed: the space, navigation, pinch interaction, and
+pull locomotion all work and feel right on a real Quest 2 over the LAN
+https path (`make_cert.py` + `server.py --tls`, port 8443). Three
+findings, each with the mechanism located:
+
+1. **Text [edit] does nothing in VR.** It works, invisibly: the editor
+   is a DOM overlay (`#editor` in index.html, `openEditor` in main.js)
+   and the DOM cannot render inside an immersive WebXR session, so the
+   textarea opens on the monitor while the user is in the headset.
+   Stopgap: when in XR, flash an in-space hint and put the panel into a
+   waiting state. Real fix: an in-space pinch keyboard for short
+   fields, phone-as-keyboard for prompts.
+2. **Note and MarkdownNote bodies are cut off.** Text rows clamp at 3
+   wrapped lines (`maxLines` in panels.js). Notes deserve a dedicated
+   tall panel style: full wrapped text, height derived from line count,
+   sensible cap with paging.
+3. **Sliders are unusably coarse on wide ranges.** `applySliderFrac`
+   maps a 202 px bar linearly across the schema range, and KSampler
+   steps has max 10000, so one px is about 50 steps. Fix, in order:
+   curated soft ranges for common widgets (steps, width/height, cfg),
+   log-space mapping when max/min exceeds about 1000, and a fine-nudge
+   affordance (wheel on desktop, stick flick in XR) worth one step per
+   click. Ray jitter at distance makes absolute-position mapping worse
+   in VR, so a relative-drag gain mode is worth trying there.
+
+Traction note: the reddit post is near 30 upvotes and the project is
+now posted in the Banodoco and Stable Diffusion discords. Strangers
+are installing it, which raises the priority of everything a stranger
+hits in the first five minutes.
+
 ## How workflow discovery works
 
 Two sources, merged at boot in `main.js`:
@@ -35,7 +67,35 @@ Known gaps, in priority order:
 
 ## Next up (agreed priorities)
 
-### 1. Error handling overhaul (do this first)
+Revised after the field report and the public traction. New order:
+
+1. **First-five-minutes fixes.** Slider soft ranges + log mapping +
+   fine nudge; full-text note panels; snap stale combo values to the
+   first available option (the sample workflows reference checkpoints
+   strangers do not have, and queueing fails validation until they
+   cycle the combo, which is the most likely first failure a new
+   install hits); in-XR hint for the text editor.
+2. **Creature comforts.** A workflow browser panel to open and close
+   workflows (replaces the arbitrary 12-workflow cap); layout
+   persistence for userdata workflows. Layouts live in
+   `extra.comfyvr.layout` and persist only when a workflow is saved to
+   the local folder; userdata workflows are read-only by design, so
+   their layouts die with the tab. Plan: a sidecar layout store (local
+   `layouts/` keyed by workflow source + name) written automatically on
+   layout edit and merged at load. Node delete belongs here too, and a
+   back-out gesture for VR (Esc is desktop-only).
+3. **Error handling overhaul** (design below, unchanged).
+4. **Hosted demo page** (gate 5): the discord audience can fly before
+   installing.
+5. **Widget coverage research**: inventory `/object_info` widget and
+   input types across popular node packs (Impact, rgthree, WAS,
+   ComfyUI-Manager installs) and bucket them: works generically now,
+   needs text entry, needs a file/image picker (LoadImage image combo +
+   upload), needs a bespoke widget. Turns "will my nodes work" into a
+   table instead of a shrug.
+6. **Deeper gallery recall** (design below, unchanged).
+
+### 3. Error handling overhaul (design)
 
 Now public, and error surfacing is ad hoc: some paths `fail()` into the
 error box, some `flashHint()`, some `console.warn`, and two real
@@ -68,24 +128,14 @@ Plan:
 - Keep the rule from day one: a failure in one hub must never break the
   space, and a failure in route registration must never break ComfyUI.
 
-### 2. Quest 2 field report fixes
-
-First in-headset session is happening now. Expected suspects, roughly:
-panel text legibility at arm's length, port-dot hit targets too small
-for rays, pull-locomotion gain (currently 4x), snap-turn feel, frame
-rate inside the largest hubs, ENTER VR button not appearing (the status
-chip tooltip explains why when the runtime is missing). Fold findings
-into an issue list and fix the top ones before promoting the repo
-further.
-
-### 3. Hosted demo page (release gate 5)
+### 4. Hosted demo page (gate 5, design)
 
 Demo mode needs a static fallback for the sample workflows (they are
 currently fetched from the server; embed them or fetch-with-fallback)
 and then the `public/` folder minus proxy runs on GitHub Pages. Link it
 from the README so people can fly before installing.
 
-### 4. Deeper gallery recall
+### 6. Deeper gallery recall (design)
 
 ComfyUI `/history` is in-memory and dies with the server. Scan the
 output directory PNGs for embedded workflow metadata instead (we
@@ -109,7 +159,8 @@ All plain ES modules, no build step, three.js r160 vendored.
 | `public/js/comfy.js` | Client for both deployments (HOSTED const), ws events, demo simulator |
 | `public/js/assets.js` | 3D output placards and materialization (GLB/OBJ/PLY) |
 | `public/js/audio.js` | Synthesized UI sound |
-| `quest.ps1` | Windows helper: adb reverse + in-headset steps |
+| `make_cert.py` | Self-signed cert for `server.py --tls` (LAN VR, no cable) |
+| `quest.ps1` | Windows helper: adb reverse + in-headset steps (USB path) |
 
 Key invariants to preserve:
 
