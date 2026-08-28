@@ -1410,7 +1410,15 @@ function xrSelectStart(st) {
       else item.audioEl.pause();
       return;
     }
-    if (item?.meta) { showGalleryCard(hit.hub, item); return; }
+    // dock to the image, same as a desktop click (flyTo teleports while
+    // presenting — same comfort model as pinching a sigil); teleport FIRST
+    // so the provenance card places itself relative to where you land
+    const center = hit.object.position.clone().applyMatrix4(hit.hub.group.matrixWorld);
+    const n = cam.pos.clone().sub(center).normalize();
+    cam.level = 'panel'; cam.hub = hit.hub;
+    flyTo(center.clone().add(n.multiplyScalar(4)), center, 1.1);
+    audio.dock();
+    if (item?.meta) showGalleryCard(hit.hub, item);
     return;
   }
   if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
