@@ -15,6 +15,46 @@ export const LOCAL = HOSTED ? '/comfyvr/local' : '/local';
 // 3D outputs (meshes, splats) hide in output dicts under pack-specific
 // keys; detect them by extension anywhere in the arrays.
 export const MESH_EXT = /\.(glb|gltf|obj|ply|splat)$/i;
+const VIDEO_EXT = /\.(mp4|webm|mov)$/i;
+const AUDIO_EXT = /\.(mp3|wav|flac|ogg|m4a)$/i;
+
+// Video and audio outputs (VHS puts videos under "gifs", audio nodes under
+// "audio"); detect by extension anywhere. Animated gif/webp stay stills for
+// now (no VideoTexture path for those).
+export function scanOutputsForMedia(output) {
+  const found = [];
+  for (const val of Object.values(output || {})) {
+    if (!Array.isArray(val)) continue;
+    for (const item of val) {
+      const f = typeof item === 'string' ? item : item?.filename;
+      if (typeof f !== 'string') continue;
+      const base = { filename: f, subfolder: item?.subfolder || '', type: item?.type || 'output' };
+      if (VIDEO_EXT.test(f)) found.push({ kind: 'video', ...base });
+      else if (AUDIO_EXT.test(f)) found.push({ kind: 'audio', ...base });
+    }
+  }
+  return found;
+}
+
+// Compress an API-format prompt into the facts a human wants on a gallery
+// card: model, seed, steps, cfg, size, and the (longest, i.e. positive)
+// prompt text.
+export function summarizeApi(api) {
+  const out = {};
+  const plain = (v) => v != null && !Array.isArray(v);
+  for (const node of Object.values(api || {})) {
+    const i = node.inputs || {};
+    if (typeof i.ckpt_name === 'string' && !out.model) out.model = i.ckpt_name.replace(/\.[^.]+$/, '');
+    if (plain(i.seed)) out.seed = i.seed;
+    if (plain(i.noise_seed)) out.seed = i.noise_seed;
+    if (plain(i.steps)) out.steps = i.steps;
+    if (plain(i.cfg)) out.cfg = i.cfg;
+    if (plain(i.width) && plain(i.height)) out.size = i.width + '×' + i.height;
+    if (typeof i.text === 'string' && i.text.trim() && (!out.prompt || i.text.length > out.prompt.length)) out.prompt = i.text;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function scanOutputsForAssets(output) {
   const found = [];
   for (const val of Object.values(output || {})) {
@@ -141,9 +181,12 @@ export class ComfyClient {
     } catch (e) { return {}; }
   }
 
+  viewURL(im) {
+    return `${API}/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type || 'output'}`;
+  }
+
   async imageBitmap(im) {
-    const url = `${API}/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
-    return await createImageBitmap(await (await fetch(url)).blob());
+    return await createImageBitmap(await (await fetch(this.viewURL(im))).blob());
   }
 
   // ---------- live path ----------
@@ -192,7 +235,10 @@ export class ComfyClient {
           try { bitmaps.push(await this.imageBitmap(im)); }
           catch (e) { console.warn('view fetch failed', e); }
         }
-        hub.onExecuted(d.node, bitmaps, scanOutputsForAssets(d.output));
+        hub.onExecuted(d.node, bitmaps, scanOutputsForAssets(d.output), {
+          meta: this.promptMeta?.get(d.prompt_id) || null,
+          media: scanOutputsForMedia(d.output),
+        });
         break;
       }
       case 'execution_success':
@@ -200,7 +246,7 @@ export class ComfyClient {
       case 'execution_interrupted':
         if (msg.type === 'execution_error') hub?.onExecError(d);
         hub?.onStatus(msg.type === 'execution_success' ? 'done' : 'error');
-        if (d.prompt_id) this.prompts.delete(d.prompt_id);
+        if (d.prompt_id) { this.prompts.delete(d.prompt_id); this.promptMeta?.delete(d.prompt_id); }
         break;
       case 'status':
         this.queueRemaining = d.status?.exec_info?.queue_remaining ?? this.queueRemaining ?? 0;
@@ -224,6 +270,7 @@ export class ComfyClient {
     const j = await r.json();
     if (j.prompt_id) {
       this.prompts.set(j.prompt_id, hub);
+      (this.promptMeta ||= new Map()).set(j.prompt_id, summarizeApi(body.prompt));
       hub.onStatus('queued');
       return j.prompt_id;
     }

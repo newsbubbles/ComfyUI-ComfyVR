@@ -6,7 +6,7 @@ import { parseWorkflow, typesAccepting, colorForType, schemaFromObjectInfo } fro
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
-import { ComfyClient, demoImage, scanOutputsForAssets } from './comfy.js';
+import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi } from './comfy.js';
 import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
 
@@ -25,6 +25,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x01050a);
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 3000);
+const audioListener = new THREE.AudioListener();
+camera.add(audioListener);
 // In XR the headset drives the camera's local pose; the rig is what our
 // fly/dock logic moves. On desktop the rig sits at origin and the camera
 // is driven directly, exactly as before.
@@ -198,6 +200,7 @@ const canvas = renderer.domElement;
 
 canvas.addEventListener('pointerdown', (e) => {
   audio.ensure();
+  try { THREE.AudioContext.getContext().resume(); } catch (err) { /* no positional audio yet */ }
   lastInput = performance.now();
   pdown = { x: e.clientX, y: e.clientY };
   dragMode = null; pendingGrab = null;
@@ -300,6 +303,7 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (palette) { closePalette(); return; }
     if (browser) { closeBrowser(); return; }
+    if (galleryCard) { hideGalleryCard(); return; }
     stepBack(); return;
   }
   const typer = palette || browser;
@@ -656,6 +660,35 @@ function closeBrowser() {
   browser = null;
 }
 
+// ---------- provenance card: what made this image ----------
+let galleryCard = null;
+function showGalleryCard(hub, item) {
+  hideGalleryCard();
+  const m = item.meta;
+  if (!m) { flashHint('no provenance on this one'); return; }
+  const rows = [];
+  if (m.model) rows.push(readoutRow(() => 'model', () => String(m.model).slice(0, 32)));
+  const facts = [m.seed != null ? 'seed ' + m.seed : null, m.steps != null ? m.steps + ' steps' : null,
+                 m.cfg != null ? 'cfg ' + m.cfg : null].filter(Boolean).join(' · ');
+  if (facts) rows.push(readoutRow(() => facts, () => m.size || ''));
+  if (m.prompt) rows.push({ kind: 'note', name: 'prompt', get: () => String(m.prompt).slice(0, 600) });
+  if (!rows.length) { flashHint('no provenance on this one'); return; }
+  const panel = new Panel({ title: 'provenance', subtitle: '', accent: '#6ec6ff', rows, worldWidth: 3.2, billboard: true });
+  const wp = item.mesh.position.clone().applyMatrix4(hub.group.matrixWorld);
+  const toCam = cam.pos.clone().sub(wp).normalize();
+  const right = new THREE.Vector3().crossVectors(toCam, UP).normalize();
+  panel.placeFlat(scene, wp.addScaledVector(right, -3.9).addScaledVector(toCam, 0.6));
+  panel.dirty();
+  galleryCard = panel;
+  audio.tick();
+}
+function hideGalleryCard() {
+  if (!galleryCard) return;
+  if (hotPanel === galleryCard) hotPanel = null;
+  galleryCard.dispose();
+  galleryCard = null;
+}
+
 async function openWorkflow(w) {
   try {
     const json = w.source === 'local' ? await client.loadLocalWorkflow(w.name) : await client.loadUserdataWorkflow(w.path);
@@ -812,6 +845,7 @@ function onClick(e) {
   const hit = pick(e);
   if (palette && (!hit || hit.panel !== palette.panel)) closePalette();
   if (browser && (!hit || (hit.panel !== browser.panel && !hit.object.userData.library))) closeBrowser();
+  if (galleryCard && (!hit || !hit.gallery)) hideGalleryCard();
   if (!hit) return;
   const { panel, hub, gallery, rowInfo } = hit;
   if (gallery) {
@@ -820,6 +854,20 @@ function onClick(e) {
       toggleAsset(hub, item, audio).catch(e => flashHint('asset load failed: ' + (e.message || e)));
       return;
     }
+    if (item?.video) {
+      item.video.muted = !item.video.muted;
+      item.video.play().catch(() => {});
+      flashHint(item.video.muted ? 'video muted' : 'video sound on');
+      if (item.meta) showGalleryCard(hub, item);
+      return;
+    }
+    if (item?.audioEl) {
+      if (item.audioEl.paused) item.audioEl.play().catch(() => {});
+      else item.audioEl.pause();
+      audio.tick();
+      return;
+    }
+    if (item?.meta) showGalleryCard(hub, item);
     // dock to a generation
     const center = hit.object.position.clone().applyMatrix4(hub.group.matrixWorld);
     const n = cam.pos.clone().sub(center).normalize();
@@ -946,6 +994,8 @@ function hubOpts() {
     audio,
     schema: SCHEMA,
     onLayout: scheduleLayoutSave,
+    audioListener,
+    mediaURL: (m) => client.viewURL(m),
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onQueue: async (h) => {
@@ -1056,17 +1106,25 @@ async function backfillHistory() {
     if (best < 0 || bestScore < 0.7) continue;
     const hub = hubs[best];
     if (hub.gallery.length >= 8) continue;
+    const meta = summarizeApi(prompt);
     for (const out of Object.values(outputs)) {
       for (const im of out.images || []) {
         if (im.type !== 'output' || hub.gallery.length >= 8) continue;
         try {
-          hub.addGeneration(await client.imageBitmap(im), '', { instant: true });
+          hub.addGeneration(await client.imageBitmap(im), '', { instant: true, meta });
           recalled++;
         } catch (err) { /* image may have been deleted from disk */ }
       }
       for (const a of scanOutputsForAssets(out)) {
         if (hub.gallery.length >= 10) break;
         if (hub.addAsset(a, { instant: true })) recalled++;
+      }
+      for (const m of scanOutputsForMedia(out)) {
+        if (hub.gallery.length >= 10) break;
+        const item = m.kind === 'video'
+          ? hub.addVideoGen(m, client.viewURL(m), { instant: true, meta })
+          : hub.addAudioGen(m, client.viewURL(m), { instant: true, meta });
+        if (item) recalled++;
       }
     }
   }
@@ -1299,7 +1357,14 @@ function xrSelectStart(st) {
   }
   if (hit.gallery) {
     const item = hit.hub?.gallery.find(g => g.mesh === hit.object);
-    if (item?.asset) toggleAsset(hit.hub, item, audio).catch(() => {});
+    if (item?.asset) { toggleAsset(hit.hub, item, audio).catch(() => {}); return; }
+    if (item?.video) { item.video.muted = !item.video.muted; item.video.play().catch(() => {}); return; }
+    if (item?.audioEl) {
+      if (item.audioEl.paused) item.audioEl.play().catch(() => {});
+      else item.audioEl.pause();
+      return;
+    }
+    if (item?.meta) { showGalleryCard(hit.hub, item); return; }
     return;
   }
   if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
@@ -1456,6 +1521,10 @@ function tick(dt) {
     browser.panel.mesh.lookAt(camWorld);
     browser.panel.update(t);
   }
+  if (galleryCard) {
+    galleryCard.mesh.lookAt(camWorld);
+    galleryCard.update(t);
+  }
   if (libraryPanel) {
     libraryPanel.mesh.lookAt(camWorld);
     // scale with distance like sigils, so the library reads from the horizon
@@ -1503,7 +1572,7 @@ function tick(dt) {
 window.CVR = {
   hubs, cam, beams, client, camera, THREE,
   openPalette, pal: () => palette,
-  openBrowser, wf: () => browser, openWorkflow, closeWorkflow,
+  openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },

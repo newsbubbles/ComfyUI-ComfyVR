@@ -77,6 +77,13 @@ backend at all so you can explore the space cold.
   node that caused it red, with the message readable at the hub core.
   Editing that node clears it. Works with custom node packs, including
   V3 style nodes with dynamic input groups.
+- **Video and audio outputs**: video results play as living gallery
+  planes (click to unmute), and audio results get a placard that plays
+  as positional sound from its spot on the rim. mp4, webm, mp3, wav,
+  flac, ogg.
+- **Provenance cards**: click a gallery image and a card shows what
+  made it: model, seed, steps, cfg, size, and the prompt. Works for
+  live generations and ones recalled from history.
 - **3D outputs**: GLB, OBJ, and PLY results get a placard. Click it and
   the real asset materializes at human scale, lit and slowly turning.
   Gaussian splat PLYs show as point clouds for now.

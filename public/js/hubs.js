@@ -219,6 +219,8 @@ export class Hub {
     this.corePanel?.dispose();
     this.sigil.dispose();
     for (const g of this.gallery) {
+      g.video?.pause();
+      g.audioEl?.pause();
       g.tex.dispose();
       g.mesh.material.dispose();
       g.mesh.removeFromParent();
@@ -351,13 +353,15 @@ export class Hub {
     this.beacon.scale.setScalar(18 * far * pulse);
 
     for (const gImg of this.gallery) {
+      let s = 1;
       if (gImg.birthT < 8) {
         gImg.birthT += dt;
-        gImg.mesh.scale.setScalar(0.2 + 0.8 * Math.min(1, gImg.birthT / 0.5));
+        s = 0.2 + 0.8 * Math.min(1, gImg.birthT / 0.5);
         const f = ease(Math.max(0, Math.min(1, (gImg.birthT - 3) / 4)));  // hold 3s, fly 4s
         gImg.mesh.position.lerpVectors(gImg.from, gImg.to, f);
         gImg.mesh.position.y += Math.sin(f * Math.PI) * 3;
       }
+      gImg.mesh.scale.set(s * gImg.sx, s * gImg.sy, 1);
       gImg.mesh.material.opacity = 0.9 * ft * (0.92 + 0.08 * Math.sin(t * 2 + gImg.phase));
       gImg.mesh.visible = ft > 0.01;
       if (gImg.assetState?.object) {
@@ -397,7 +401,7 @@ export class Hub {
     this.corePanel?.dirty();
   }
 
-  onExecuted(nodeId, imgBitmaps, assets = []) {
+  onExecuted(nodeId, imgBitmaps, assets = [], extras = null) {
     const id = Number(nodeId);
     const p = this.panels.get(id);
     if (p) {
@@ -409,12 +413,19 @@ export class Hub {
     }
     if (imgBitmaps?.length) {
       if (this.coreImageRow) { this.coreImageRow.img = imgBitmaps[0]; this.corePanel.dirty(); }
-      for (const bm of imgBitmaps) this.addGeneration(bm);
+      for (const bm of imgBitmaps) this.addGeneration(bm, '', { meta: extras?.meta || null });
       this.opts.audio?.chime();
     }
     if (assets?.length) {
       for (const a of assets) this.addAsset(a);
       this.opts.audio?.accrete();
+    }
+    if (extras?.media?.length && this.opts.mediaURL) {
+      for (const m of extras.media) {
+        if (m.kind === 'video') this.addVideoGen(m, this.opts.mediaURL(m), { meta: extras?.meta || null });
+        else this.addAudioGen(m, this.opts.mediaURL(m), { meta: extras?.meta || null });
+      }
+      this.opts.audio?.chime();
     }
   }
 
@@ -433,11 +444,12 @@ export class Hub {
     return new THREE.Vector3(Math.cos(slotAngle) * r, this.rimY + 2 + (i % 3) * 1.3, Math.sin(slotAngle) * r);
   }
 
-  pushGalleryMesh(canvas, { instant = false, asset = null } = {}) {
-    const tex = new THREE.CanvasTexture(canvas);
+  pushGalleryMesh(src, { instant = false, asset = null, meta = null, blending = 'additive' } = {}) {
+    const tex = src.isTexture ? src : new THREE.CanvasTexture(src);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending,
+      map: tex, transparent: true, opacity: 0.9,
+      blending: blending === 'normal' ? THREE.NormalBlending : THREE.AdditiveBlending,
       depthWrite: false, depthTest: false, side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.4), mat);
@@ -448,13 +460,51 @@ export class Hub {
     const from = new THREE.Vector3(-Math.cos(this.meanAngle) * 2.6, 4.0, -Math.sin(this.meanAngle) * 2.6);
     mesh.position.copy(instant ? to : from);
     this.group.add(mesh);
-    const item = { mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to, asset };
+    const item = { mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to, asset, meta, sx: 1, sy: 1 };
     this.gallery.push(item);
     return item;
   }
 
   addGeneration(bitmap, caption = '', opts = {}) {
     return this.pushGalleryMesh(frameImage(bitmap, caption), opts);
+  }
+
+  // Video outputs become living gallery planes: a muted looping VideoTexture,
+  // click/pinch to unmute.
+  addVideoGen(media, url, opts = {}) {
+    if (this.gallery.some(g => g.media?.filename === media.filename && g.media?.subfolder === media.subfolder)) return null;
+    const el = document.createElement('video');
+    el.crossOrigin = 'anonymous';
+    el.muted = true; el.loop = true; el.playsInline = true;
+    el.src = url;
+    el.play().catch(() => {});
+    const item = this.pushGalleryMesh(new THREE.VideoTexture(el), { ...opts, blending: 'normal' });
+    item.media = media;
+    item.video = el;
+    el.addEventListener('loadedmetadata', () => {
+      const a = el.videoWidth / Math.max(1, el.videoHeight);
+      if (a >= 1) { item.sx = 1; item.sy = 1 / a; } else { item.sx = a; item.sy = 1; }
+    });
+    return item;
+  }
+
+  // Audio outputs get a placard and play as positional sound from their
+  // gallery slot.
+  addAudioGen(media, url, opts = {}) {
+    if (this.gallery.some(g => g.media?.filename === media.filename && g.media?.subfolder === media.subfolder)) return null;
+    const item = this.pushGalleryMesh(audioPlacard(media), opts);
+    item.media = media;
+    const el = document.createElement('audio');
+    el.crossOrigin = 'anonymous';
+    el.src = url;
+    item.audioEl = el;
+    if (this.opts.audioListener) {
+      const pa = new THREE.PositionalAudio(this.opts.audioListener);
+      pa.setMediaElementSource(el);
+      pa.setRefDistance(10);
+      item.mesh.add(pa);
+    }
+    return item;
   }
 
   // A 3D output gets a placard; clicking it materializes the real asset.
@@ -584,6 +634,37 @@ function assetPlacard(asset) {
   g.font = '14px Consolas, monospace';
   g.fillStyle = 'rgba(159,232,220,0.5)';
   g.fillText('◈ materialize', 200, 384);
+  return c;
+}
+
+// Placard for an audio output: note glyph + filename + play hint.
+function audioPlacard(media) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 400;
+  const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(159,232,220,0.8)';
+  g.lineWidth = 3;
+  g.strokeRect(4, 4, 392, 392);
+  g.fillStyle = 'rgba(191,255,244,0.95)';
+  g.font = 'bold 120px Consolas, monospace';
+  g.textAlign = 'center';
+  g.fillText('♫', 200, 200);
+  // a fake little waveform so it reads as sound at a distance
+  g.strokeStyle = 'rgba(159,232,220,0.6)';
+  g.lineWidth = 2.5;
+  g.beginPath();
+  for (let x = 60; x <= 340; x += 8) {
+    const h = 12 + 26 * Math.abs(Math.sin(x * 0.13) * Math.sin(x * 0.041));
+    g.moveTo(x, 268 - h); g.lineTo(x, 268 + h);
+  }
+  g.stroke();
+  g.font = '16px Consolas, monospace';
+  g.fillStyle = 'rgba(159,232,220,0.7)';
+  const name = media.filename.length > 34 ? media.filename.slice(0, 33) + '…' : media.filename;
+  g.fillText(name, 200, 348);
+  g.font = '14px Consolas, monospace';
+  g.fillStyle = 'rgba(159,232,220,0.5)';
+  g.fillText('▸ play', 200, 380);
   return c;
 }
 
