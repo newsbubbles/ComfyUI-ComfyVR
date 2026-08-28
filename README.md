@@ -111,7 +111,7 @@ you can patch it.
 ## Status
 
 Not yet done: node delete, subgraph execution (they render but refuse to
-queue, honestly), proper gaussian splat rendering, voice control, and
+queue), proper gaussian splat rendering, voice control, and
 multiplayer presence. The in-headset experience is young. Expect rough
 edges and report them.
 
