@@ -2,7 +2,7 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow, typesAccepting, colorForType, schemaFromObjectInfo } from './graph.js';
+import { parseWorkflow, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
@@ -220,6 +220,9 @@ canvas.addEventListener('pointerdown', (e) => {
       } else if (s && s.dir === 'in' && s.node.linkInputs[s.index]?.link != null) {
         const L = hit.hub.graph.links.get(s.node.linkInputs[s.index].link);
         if (L) pendingGrab = { kind: 'link', drag: { mode: 'retarget', hub: hit.hub, type: L.type, srcNode: L.src, srcSlot: L.srcSlot, linkId: L.id } };
+      } else if (s && s.dir === 'in') {
+        // empty input: pull backward to find (or grow) something that feeds it
+        pendingGrab = { kind: 'link', drag: { mode: 'reverse', hub: hit.hub, type: s.type, dstNode: s.node.id, dstSlot: s.index } };
       }
     }
   }
@@ -395,7 +398,9 @@ function portSlotAt(hit) {
 function beginLink(drag) {
   linkDrag = drag;
   dragMode = 'link';
-  drag.A = drag.hub.anchorFor(drag.srcNode, 'out', { srcSlot: drag.srcSlot });
+  drag.A = drag.mode === 'reverse'
+    ? drag.hub.anchorFor(drag.dstNode, 'in', { dstSlot: drag.dstSlot })
+    : drag.hub.anchorFor(drag.srcNode, 'out', { srcSlot: drag.srcSlot });
   if (!drag.A) { linkDrag = null; dragMode = 'look'; return; }
   drag.drop = drag.A.clone();
   if (drag.mode === 'retarget') {
@@ -403,7 +408,8 @@ function beginLink(drag) {
     if (b) b.line.visible = false;
   }
   beams.addBeam('::drag', drag.A, drag.A.clone(), colorForType(drag.type), { alpha: 0.85, bulge: 0.08, group: '::drag' });
-  for (const p of drag.hub.panels.values()) p.setHint({ type: drag.type, dir: 'in' });
+  // reverse drags hunt for producers, so halo the OUTPUT dots instead
+  for (const p of drag.hub.panels.values()) p.setHint({ type: drag.type, dir: drag.mode === 'reverse' ? 'out' : 'in' });
   audio.tick();
 }
 function doLinkDrag(e) { setRay(e); doLinkDragRay(); }
@@ -424,6 +430,10 @@ function finishLink(hit) {
   }
   if (hit && hit.hub === drag.hub && hit.rowInfo?.kind === 'port') {
     const s = portSlotAt(hit);
+    if (s && drag.mode === 'reverse') {
+      if (s.dir === 'out' && s.type === drag.type) drag.hub.commitNewLink(s.node.id, s.index, drag.dstNode, drag.dstSlot);
+      return;
+    }
     if (s && s.dir === 'in' && s.type === drag.type) {
       if (drag.mode === 'new') drag.hub.commitNewLink(drag.srcNode, drag.srcSlot, s.node.id, s.index);
       else drag.hub.retargetTo(drag.linkId, s.node.id, s.index);
@@ -432,7 +442,7 @@ function finishLink(hit) {
     return;  // incompatible port: no-op
   }
   if (!hit) {
-    if (drag.mode === 'new') openPalette(drag);
+    if (drag.mode === 'new' || drag.mode === 'reverse') openPalette(drag);
     else { drag.hub.detachLink(drag.linkId); flashHint('link detached'); }
   }
 }
@@ -460,7 +470,9 @@ function fuzzyScore(q, type) {
 function catOf(t) { return ((SCHEMA[t].category || 'other').split('/')[0] || 'other').toLowerCase(); }
 
 function paletteMatches(useCat) {
-  let all = typesAccepting(SCHEMA, palette.drag.type);
+  let all = palette.drag.mode === 'reverse'
+    ? typesProducing(SCHEMA, palette.drag.type)
+    : typesAccepting(SCHEMA, palette.drag.type);
   if (useCat && palette.cat) all = all.filter(t => catOf(t) === palette.cat);
   const q = palette.query.trim().toLowerCase();
   if (q) {
@@ -479,7 +491,10 @@ function addFromPalette(t) {
   const { drag } = palette;
   const rel = palette.pos.clone().sub(drag.hub.center());
   const place = { theta: Math.atan2(rel.z, rel.x), r: Math.hypot(rel.x, rel.z), y: rel.y };
-  drag.hub.addNodeAt(t, place, { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type });
+  const pending = drag.mode === 'reverse'
+    ? { reverse: true, dstNode: drag.dstNode, dstSlot: drag.dstSlot, type: drag.type }
+    : { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type };
+  drag.hub.addNodeAt(t, place, pending);
   closePalette();
 }
 
@@ -541,7 +556,8 @@ function openPalette(drag) {
     Object.assign(SCHEMA, schemaFromObjectInfo(client.objectInfo, Object.keys(client.objectInfo)));
     paletteExpanded = true;
   }
-  if (!typesAccepting(SCHEMA, drag.type).length) return;
+  const any = drag.mode === 'reverse' ? typesProducing(SCHEMA, drag.type).length : typesAccepting(SCHEMA, drag.type).length;
+  if (!any) return;
   palette = { panel: null, pos: drag.drop.clone(), hub: drag.hub, drag, query: '', first: null, mode: 'list', cat: null, page: 0 };
   buildPalette();
   audio.accrete();
@@ -648,7 +664,17 @@ function buildBrowser() {
 function openBrowser() {
   closeBrowser();
   closePalette();
-  browser = { panel: null, page: 0, query: '', first: null, pos: cam.pos.clone().add(forward().multiplyScalar(11)) };
+  // in XR the head drives the view, not cam.yaw: place the panel where the
+  // user is actually looking or it opens behind them
+  let pos;
+  if (renderer.xr.isPresenting) {
+    const head = camera.getWorldPosition(new THREE.Vector3());
+    const dir = camera.getWorldDirection(new THREE.Vector3());
+    pos = head.addScaledVector(dir, 8);
+  } else {
+    pos = cam.pos.clone().add(forward().multiplyScalar(11));
+  }
+  browser = { panel: null, page: 0, query: '', first: null, pos };
   buildBrowser();
   refreshWfIndex().then(() => { if (browser) buildBrowser(); });
   audio.accrete();
@@ -1282,6 +1308,7 @@ function attachWrist(grip) {
     const rows = [
       readoutRow(() => (client.mode === 'live' ? '● LIVE' : '◌ DEMO'),
                  () => (client.queueRemaining ? '◈ ' + client.queueRemaining + ' queued' : '')),
+      buttonRow('⌸ WORKFLOWS', () => openBrowser()),
       buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
     ];
@@ -1362,6 +1389,9 @@ function xrSelectStart(st) {
           beginLink({ mode: 'retarget', hub: hit.hub, type: L.type, srcNode: L.src, srcSlot: L.srcSlot, linkId: L.id });
           if (linkDrag) st.mode = 'link';
         }
+      } else if (s && s.dir === 'in') {
+        beginLink({ mode: 'reverse', hub: hit.hub, type: s.type, dstNode: s.node.id, dstSlot: s.index });
+        if (linkDrag) st.mode = 'link';
       }
       return;
     }

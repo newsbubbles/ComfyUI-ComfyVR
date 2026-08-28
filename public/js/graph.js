@@ -474,6 +474,17 @@ export function typesAccepting(schema, type, excludeType = null) {
   return out;
 }
 
+// Node types whose outputs can feed an input of `type` (the reverse
+// question, asked when building a workflow backward from what a node needs).
+export function typesProducing(schema, type, excludeType = null) {
+  const out = [];
+  for (const [t, sc] of Object.entries(schema)) {
+    if (t === excludeType) continue;
+    if ((sc.outputs || []).includes(type)) out.push(t);
+  }
+  return out;
+}
+
 // Frontend-only node types: they never reach the server. Reroute is a
 // passthrough, PrimitiveNode injects its value into whatever it feeds,
 // Notes are decoration.

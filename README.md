@@ -62,9 +62,11 @@ backend at all so you can explore the space cold.
 - **Real editing**: sliders, combos, seed reroll, prompt text. Drag a
   panel's title bar to move it. Grab a port dot to rewire or unplug a
   link. Drop a wire into empty space and an add-node palette offers
-  every compatible type in your install: type to fuzzy-filter on
-  desktop, or browse by category and page through with pinches in VR.
-  The ✕ in a node's header deletes it, with a confirm tap.
+  every compatible type in your install: pull forward from an output
+  to grow a consumer, or pull backward from an empty input to grow the
+  thing that feeds it. Type to fuzzy-filter on desktop, or browse by
+  category and page through with pinches in VR. The ✕ in a node's
+  header deletes it, with a confirm tap.
 - **Sane controls**: sliders travel useful ranges (steps sweeps 1 to
   150, not 1 to 10000), mouse wheel fine-nudges one step at a time,
   seeds with randomize actually randomize between queues, and stored
@@ -131,7 +133,7 @@ requires a secure context, and there are three ways to get one:
 | Click | left click | trigger | pinch |
 | Move a node | drag its title bar | hold trigger on title bar | pinch and hold title bar |
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
-| Add a node | drop a wire into space | same, by ray | same, by pinch |
+| Add a node | drop a wire from any port into space | same, by ray | same, by pinch |
 | Delete a node | ✕ on its header, twice | same, by ray | same, by pinch |
 | Browse workflows | library at the center | same | same |
 | Back out | Esc | wrist watch | wrist watch |

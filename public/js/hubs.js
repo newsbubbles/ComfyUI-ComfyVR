@@ -240,9 +240,15 @@ export class Hub {
     p.foldAlpha = 1;
     p.mesh.visible = true;
     if (pending) {
-      const slot = node.linkInputs.findIndex(li => li.type === pending.type && li.link == null);
-      const use = slot >= 0 ? slot : node.linkInputs.findIndex(li => li.type === pending.type);
-      if (use >= 0) this.commitNewLink(pending.srcNode, pending.srcSlot, node.id, use);
+      if (pending.reverse) {
+        // the new node FEEDS an existing input (pulled from an empty socket)
+        const outSlot = node.outputs.findIndex(o => o.type === pending.type);
+        if (outSlot >= 0) this.commitNewLink(node.id, outSlot, pending.dstNode, pending.dstSlot);
+      } else {
+        const slot = node.linkInputs.findIndex(li => li.type === pending.type && li.link == null);
+        const use = slot >= 0 ? slot : node.linkInputs.findIndex(li => li.type === pending.type);
+        if (use >= 0) this.commitNewLink(pending.srcNode, pending.srcSlot, node.id, use);
+      }
     }
     this.opts.audio?.accrete();
     this.opts.onLayout?.(this);
