@@ -28,8 +28,9 @@ from yarl import URL
 ROOT = Path(__file__).parent
 PUBLIC = ROOT / "public"
 WORKFLOWS = ROOT / "workflows"
+LAYOUTS = ROOT / "layouts"
 
-SAFE_NAME = re.compile(r"^[\w][\w .()\-]{0,80}$")
+SAFE_NAME = re.compile(r"^[\w][\w .()\-]{0,120}$")
 
 
 @web.middleware
@@ -90,6 +91,28 @@ def app_factory(backend: str) -> web.Application:
         p = WORKFLOWS / (name + ".json")
         p.write_text(json.dumps(body, indent=1), encoding="utf-8")
         return web.json_response({"saved": name, "mtime": int(time.time())})
+
+    # Layout sidecar: 3D arrangements for workflows we must never write back
+    # (userdata stays read-only). One small JSON per workflow, keyed
+    # source__name.
+    async def layouts_all(request):
+        out = {}
+        if LAYOUTS.is_dir():
+            for p in LAYOUTS.glob("*.json"):
+                try:
+                    out[p.stem] = json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+        return web.json_response(out)
+
+    async def layout_save(request):
+        key = request.match_info["key"]
+        if not SAFE_NAME.match(key):
+            raise web.HTTPBadRequest(text="bad key")
+        body = await request.json()
+        LAYOUTS.mkdir(exist_ok=True)
+        (LAYOUTS / (key + ".json")).write_text(json.dumps(body), encoding="utf-8")
+        return web.json_response({"saved": key})
 
     async def proxy(request):
         """Forward /api/<path> to the backend as /<path>.
@@ -162,6 +185,8 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_get("/local/workflows", local_list)
     app.router.add_get("/local/workflows/{name}", local_get)
     app.router.add_post("/local/workflows/{name}", local_save)
+    app.router.add_get("/local/layouts", layouts_all)
+    app.router.add_post("/local/layouts/{key}", layout_save)
     app.router.add_get("/ws", ws_proxy)
     app.router.add_route("*", "/api/{path:.*}", proxy)
     app.router.add_static("/", PUBLIC)

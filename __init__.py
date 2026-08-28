@@ -22,7 +22,8 @@ try:
     ROOT = os.path.dirname(os.path.abspath(__file__))
     PUBLIC = os.path.join(ROOT, "public")
     WORKFLOWS = os.path.join(ROOT, "workflows")
-    SAFE_NAME = re.compile(r"^[\w][\w .()\-]{0,80}$")
+    LAYOUTS = os.path.join(ROOT, "layouts")
+    SAFE_NAME = re.compile(r"^[\w][\w .()\-]{0,120}$")
     NOCACHE = {"Cache-Control": "no-cache"}
 
     routes = PromptServer.instance.routes
@@ -67,6 +68,33 @@ try:
         with open(os.path.join(WORKFLOWS, name + ".json"), "w", encoding="utf-8") as fh:
             json.dump(body, fh, indent=1)
         return web.json_response({"saved": name, "mtime": int(time.time())})
+
+    # Layout sidecar: 3D arrangements for workflows we must never write
+    # back (userdata stays read-only). Keyed source__name.
+    @routes.get("/comfyvr/local/layouts")
+    async def cvr_layouts(request):
+        out = {}
+        if os.path.isdir(LAYOUTS):
+            for f in os.listdir(LAYOUTS):
+                if not f.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(LAYOUTS, f), "r", encoding="utf-8") as fh:
+                        out[f[:-5]] = json.load(fh)
+                except Exception:
+                    pass
+        return web.json_response(out)
+
+    @routes.post("/comfyvr/local/layouts/{key}")
+    async def cvr_layout_save(request):
+        key = request.match_info["key"]
+        if not SAFE_NAME.match(key):
+            raise web.HTTPBadRequest(text="bad key")
+        body = await request.json()
+        os.makedirs(LAYOUTS, exist_ok=True)
+        with open(os.path.join(LAYOUTS, key + ".json"), "w", encoding="utf-8") as fh:
+            json.dump(body, fh)
+        return web.json_response({"saved": key})
 
     @routes.get("/comfyvr/{tail:.+}")
     async def cvr_static(request):

@@ -126,15 +126,22 @@ consistent, verified). The palette lost the "accrete" nomenclature: it
 is titled "add node", sorts types already used in the workflow first,
 and typing filters it with the same fuzzy keys the stock frontend
 searches (name, display_name, search_aliases; schema now carries
-aliases and category). Remaining, creature comforts and robustness: a workflow browser panel to open and
-close workflows (kills the 12-workflow cap); a layout sidecar store
-for userdata workflows (layouts currently persist only via local
-saves; userdata stays read-only, so store layouts in a local
-`layouts/` dir keyed by source + name, written on layout edit, merged
-at load); node delete; a VR back-out gesture (Esc is desktop-only);
-then the error handling overhaul (design below). The hosted demo page
-(design below) rides whenever a gap opens. Widget coverage research
-(below) feeds both spikes.
+aliases and category). Also done 2026-08-28: the WORKFLOW BROWSER and the LAYOUT SIDECAR.
+A library sigil sits at the constellation origin (distance-scaled like
+hub sigils); its BROWSE button opens a paged, filterable panel over
+the full index (repo-local + all userdata, underscore-prefixed scratch
+files excluded). Open workflows sort first with a filled dot; clicking
+one flies to it, its right edge closes it (Hub.dispose folds beams,
+panels, gallery, group). New hubs stand in the widest angular gap on
+the horizon ring; constellation threads rebuild on every open/close.
+Layouts write to `layouts/<source>__<name>.json` (endpoints in BOTH
+server modes; localStorage fallback in demo), debounced 1.2s after any
+move/add/delete, merged over the embedded layout at every load.
+Verified: open beyond the old 12-cap, move, close, reopen, placement
+identical. Remaining: a VR back-out gesture (Esc is desktop-only),
+then the J0 agent bridge (JARVIS.md). The hosted demo page (design
+below) rides whenever a gap opens. Widget coverage research (below)
+still open.
 
 ### Node search (research done 2026-08-28)
 

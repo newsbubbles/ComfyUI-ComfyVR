@@ -47,8 +47,14 @@ backend at all so you can explore the space cold.
 
 ## What it does
 
-- **Constellation view**: all your saved workflows as sigils in space,
-  with threads connecting workflows that share a checkpoint.
+- **Constellation view**: your workflows as sigils in space, with
+  threads connecting workflows that share a checkpoint. A library at
+  the center of the constellation browses everything you have saved:
+  open any workflow onto the horizon, close ones you are done with,
+  type to filter on desktop or page through with pinches in VR.
+- **Layout memory**: arrange a workflow's nodes and the arrangement
+  comes back next session, stored in a small sidecar so your actual
+  workflow files are never touched.
 - **Amphitheater view**: the workflow as concentric rings ordered by
   graph depth. Panel colors follow link types: MODEL purple at the core
   out to IMAGE blue at the rim.
@@ -154,13 +160,8 @@ What does not work yet, so you know before you fly:
   means tweaking, rewiring, growing nodes from dropped wires, and
   deleting. There is no undo, so deletes are confirmed and unsaved
   changes revert on reload.
-- **Only your first 12 saved workflows load** into the constellation.
-  A workflow browser is coming.
 - **Galleries forget on ComfyUI restart.** History lives in ComfyUI's
   memory; recall from the output folder on disk is planned.
-- **Layouts persist only for workflows saved to the local folder.**
-  Your original ComfyUI files are never modified, which also means
-  arrangements of unsaved workflows reset with the tab.
 - **Custom nodes render generically.** Standard widget types (sliders,
   combos, toggles, text) all work; bespoke frontend widgets from node
   packs show as plain values.
@@ -173,9 +174,6 @@ What does not work yet, so you know before you fly:
 The goal: the most natural place to run, tend, and remix generative
 workflows, on a screen or standing inside them. In rough order:
 
-- Workflow browser: open and close any of your workflows from inside
-  the space, no cap.
-- Layout memory for every workflow, without touching your files.
 - Creating workflows: start an empty one from a template, grow it node
   by node, save it. Node delete comes with this.
 - Node search that works in VR: fuzzy matching like the stock

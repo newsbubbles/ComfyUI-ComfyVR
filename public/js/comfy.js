@@ -107,6 +107,32 @@ export class ComfyClient {
     return r.ok;
   }
 
+  // Layout sidecar: node arrangements keyed source__name, stored server-side
+  // (localStorage in demo mode) so they survive without ever writing to the
+  // user's workflow files.
+  async loadLayouts() {
+    try {
+      const r = await fetch(LOCAL + '/layouts');
+      if (r.ok) return await r.json();
+    } catch (e) { /* demo or old server */ }
+    try { return JSON.parse(localStorage.getItem('cvr-layouts') || '{}'); } catch (e) { return {}; }
+  }
+
+  async saveLayout(key, layout) {
+    try {
+      const r = await fetch(LOCAL + '/layouts/' + encodeURIComponent(key), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(layout),
+      });
+      if (r.ok) return true;
+    } catch (e) { /* fall through to localStorage */ }
+    try {
+      const all = JSON.parse(localStorage.getItem('cvr-layouts') || '{}');
+      all[key] = layout;
+      localStorage.setItem('cvr-layouts', JSON.stringify(all));
+      return true;
+    } catch (e) { return false; }
+  }
+
   async history(maxItems = 64) {
     if (this.mode !== 'live') return {};
     try {

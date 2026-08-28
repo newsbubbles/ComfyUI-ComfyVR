@@ -137,6 +137,7 @@ export class Hub {
     p.setPlacement(r, theta, y);
     this.overrides[id] = { theta: +theta.toFixed(4), y: +y.toFixed(3), r: +r.toFixed(3) };
     this.refreshNodeBeams(id);
+    this.opts.onLayout?.(this);
   }
 
   refreshNodeBeams(id) {
@@ -203,7 +204,28 @@ export class Hub {
     this.sigil.dirty();
     this.corePanel?.dirty();
     this.opts.audio?.toggle(false);
+    this.opts.onLayout?.(this);
     return true;
+  }
+
+  // Fold this hub out of existence: every beam, panel, gallery texture, and
+  // the group itself. The graph object simply gets garbage collected.
+  dispose() {
+    const prefix = `hub:${this.name}:`;
+    for (const key of [...this.beams.beams.keys()]) {
+      if (key.startsWith(prefix)) this.beams.removeBeam(key);
+    }
+    for (const p of this.panels.values()) p.dispose();
+    this.corePanel?.dispose();
+    this.sigil.dispose();
+    for (const g of this.gallery) {
+      g.tex.dispose();
+      g.mesh.material.dispose();
+      g.mesh.removeFromParent();
+      if (g.assetState?.object) g.assetState.object.removeFromParent();
+    }
+    this.beacon.material.dispose();
+    this.group.removeFromParent();
   }
 
   // ---------- node adding (palette drop) ----------
@@ -221,6 +243,7 @@ export class Hub {
       if (use >= 0) this.commitNewLink(pending.srcNode, pending.srcSlot, node.id, use);
     }
     this.opts.audio?.accrete();
+    this.opts.onLayout?.(this);
     return node;
   }
 

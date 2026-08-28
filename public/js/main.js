@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, typesAccepting, colorForType, schemaFromObjectInfo } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow, readoutRow, sliderValue } from './panels.js';
+import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets } from './comfy.js';
@@ -273,6 +273,7 @@ canvas.addEventListener('wheel', (e) => {
     const hit = pick(e);
     const ri = hit?.rowInfo;
     if (palette && hit?.panel === palette.panel) { palettePage(e.deltaY > 0 ? 1 : -1); return; }
+    if (browser && hit?.panel === browser.panel) { browser.page += e.deltaY > 0 ? 1 : -1; buildBrowser(); audio.tick(); return; }
     if (ri?.kind === 'slider' && ri.row?.widget) {
       const row = ri.row, wg = row.widget;
       const dir = e.deltaY < 0 ? 1 : -1;
@@ -298,17 +299,24 @@ addEventListener('keydown', (e) => {
   lastInput = performance.now();
   if (e.key === 'Escape') {
     if (palette) { closePalette(); return; }
+    if (browser) { closeBrowser(); return; }
     stepBack(); return;
   }
-  if (palette) {
-    // the palette owns the keyboard: type to filter, Enter takes the top hit
-    if (e.key === 'Backspace') { palette.query = palette.query.slice(0, -1); palette.page = 0; buildPalette(); return; }
-    if (e.key === 'Enter') { if (palette.first) addFromPalette(palette.first); return; }
+  const typer = palette || browser;
+  if (typer) {
+    // an open picker owns the keyboard: type to filter, Enter takes the top hit
+    const rebuild = palette ? buildPalette : buildBrowser;
+    if (e.key === 'Backspace') { typer.query = typer.query.slice(0, -1); typer.page = 0; rebuild(); return; }
+    if (e.key === 'Enter') {
+      if (palette?.first) addFromPalette(palette.first);
+      else if (browser?.first) openWorkflow(browser.first);
+      return;
+    }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      palette.query += e.key;
-      palette.mode = 'list';   // search is global, leave the category view
-      palette.page = 0;
-      buildPalette();
+      typer.query += e.key;
+      if (palette) palette.mode = 'list';   // search is global, leave the category view
+      typer.page = 0;
+      rebuild();
       audio.tick();
       return;
     }
@@ -541,6 +549,184 @@ function closePalette() {
   palette = null;
 }
 
+// ---------- layout sidecar: arrangements survive without touching files ----------
+let LAYOUTS = {};
+const layoutTimers = new Map();
+function wfKey(source, name) { return (source + '__' + name).replace(/[^\w .()\-]/g, '_').slice(0, 120); }
+function scheduleLayoutSave(hub) {
+  clearTimeout(layoutTimers.get(hub));
+  layoutTimers.set(hub, setTimeout(() => {
+    const key = wfKey(hub.source, hub.name);
+    LAYOUTS[key] = hub.overrides;
+    client.saveLayout(key, hub.overrides);
+  }, 1200));
+}
+function applySidecarLayout(json, source, name) {
+  const side = LAYOUTS[wfKey(source, name)];
+  if (!side) return;
+  const extra = json.extra = json.extra || {};
+  const cvr = extra.comfyvr = extra.comfyvr || {};
+  cvr.layout = { ...(cvr.layout || {}), ...side };
+}
+
+// ---------- workflow library: browse, open, and close from inside ----------
+let libraryPanel = null;
+let browser = null;
+let wfIndex = [];
+
+function buildLibrary() {
+  libraryPanel = new Panel({
+    title: 'workflow library', subtitle: '', accent: '#7ce8dc', worldWidth: 6.5, billboard: true,
+    rows: [
+      glyphRow('⌸', true),
+      readoutRow(() => `${wfIndex.length} workflows`, () => `${hubs.length} open`),
+      buttonRow('⌸ BROWSE', () => openBrowser()),
+    ],
+  });
+  libraryPanel.placeFlat(scene, new THREE.Vector3(0, 0, 0));
+  libraryPanel.mesh.userData.library = true;
+  libraryPanel.baseOpacity = 0.85;
+  libraryPanel.dirty();
+}
+
+async function refreshWfIndex() {
+  const local = await client.listLocalWorkflows().catch(() => []);
+  const user = await client.listUserdataWorkflows().catch(() => []);
+  const loc = local.filter(it => !it.name.startsWith('_'));   // _snap and friends are not workflows
+  wfIndex = [
+    ...loc.map(it => ({ name: it.name, source: 'local' })),
+    ...user.filter(u => !loc.some(l => l.name === u.name)).map(u => ({ name: u.name, source: 'comfyui', path: u.path })),
+  ];
+  libraryPanel?.dirty();
+}
+
+function isOpen(w) { return hubs.some(h => h.name === w.name); }
+
+function browserItems() {
+  const q = browser.query.trim().toLowerCase();
+  let items = wfIndex;
+  if (q) items = items.filter(w => w.name.toLowerCase().includes(q));
+  return items.slice().sort((a, b) => {
+    const ao = isOpen(a) ? 0 : 1, bo = isOpen(b) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function buildBrowser() {
+  browser.panel?.dispose();
+  const PAGE = 8;
+  const items = browserItems();
+  const pages = Math.max(1, Math.ceil(items.length / PAGE));
+  browser.page = Math.min(Math.max(0, browser.page), pages - 1);
+  const slice = items.slice(browser.page * PAGE, browser.page * PAGE + PAGE);
+  browser.first = slice.find(w => !isOpen(w)) || null;
+  const rows = [
+    readoutRow(() => (browser?.query ? '⌕ ' + browser.query : '⌕ type to filter'),
+               () => '● open · right edge closes'),
+    ...(slice.length ? slice.map(w => {
+      const open = isOpen(w);
+      return buttonRow(`${open ? '●' : '◌'} ${w.name.toUpperCase()}${w.source === 'local' ? ' ⬡' : ''}`, (frac) => {
+        if (open && frac > 0.82) closeWorkflow(w.name);
+        else if (open) { const h = hubs.find(x => x.name === w.name); closeBrowser(); flyToHub(h); }
+        else openWorkflow(w);
+      });
+    }) : [readoutRow(() => 'no matching workflows', () => '')]),
+    ...(pages > 1 ? [buttonRow(`◂  ${browser.page + 1} / ${pages}  ▸`, (frac) => { browser.page += frac < 0.5 ? -1 : 1; buildBrowser(); audio.tick(); })] : []),
+  ];
+  const panel = new Panel({ title: 'workflows', subtitle: String(wfIndex.length), accent: '#7ce8dc', rows, worldWidth: 3.6, billboard: true });
+  panel.placeFlat(scene, browser.pos);
+  panel.mesh.userData.palette = true;   // same reachability rules as the palette
+  panel.dirty();
+  browser.panel = panel;
+}
+
+function openBrowser() {
+  closeBrowser();
+  closePalette();
+  browser = { panel: null, page: 0, query: '', first: null, pos: cam.pos.clone().add(forward().multiplyScalar(11)) };
+  buildBrowser();
+  refreshWfIndex().then(() => { if (browser) buildBrowser(); });
+  audio.accrete();
+}
+function closeBrowser() {
+  if (!browser) return;
+  if (hotPanel === browser.panel) hotPanel = null;
+  browser.panel?.dispose();
+  browser = null;
+}
+
+async function openWorkflow(w) {
+  try {
+    const json = w.source === 'local' ? await client.loadLocalWorkflow(w.name) : await client.loadUserdataWorkflow(w.path);
+    if (!json || !Array.isArray(json.nodes) || !json.nodes.length) { flashHint('not a workflow: ' + w.name); return; }
+    const missing = [...new Set(json.nodes.map(n => n.type))].filter(t => !SCHEMA[t]);
+    if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
+    applySidecarLayout(json, w.source, w.name);
+    const graph = parseWorkflow(json, SCHEMA);
+    const hub = new Hub(scene, beams, { name: w.name, graph, source: w.source }, hubOpts());
+    // stand it in the widest gap on the horizon ring
+    const ringR = Math.max(95, (hubs.length + 1) * 10);
+    let th = 0;
+    const angles = hubs.map(h => Math.atan2(h.center().z, h.center().x)).sort((a, b) => a - b);
+    if (angles.length) {
+      let best = -1;
+      for (let i = 0; i < angles.length; i++) {
+        const a = angles[i], b = i + 1 < angles.length ? angles[i + 1] : angles[0] + Math.PI * 2;
+        if (b - a > best) { best = b - a; th = a + (b - a) / 2; }
+      }
+    }
+    hub.setPosition(new THREE.Vector3(Math.cos(th) * ringR, (hubs.length % 2) * 8 - 4, Math.sin(th) * ringR));
+    hubs.push(hub);
+    rebuildSpaceThreads();
+    closeBrowser();
+    audio.accrete();
+    flashHint('opened ' + w.name);
+    flyToHub(hub);
+  } catch (e) {
+    flashHint('open failed: ' + (e.message || e));
+  }
+}
+
+function closeWorkflow(name) {
+  const i = hubs.findIndex(h => h.name === name);
+  if (i < 0) return;
+  const h = hubs[i];
+  if (cam.hub === h) { cam.hub = null; cam.dock = null; }
+  clearTimeout(layoutTimers.get(h));
+  layoutTimers.delete(h);
+  h.dispose();
+  hubs.splice(i, 1);
+  rebuildSpaceThreads();
+  audio.toggle(false);
+  flashHint('closed ' + name);
+  libraryPanel?.dirty();
+  if (browser) buildBrowser();
+}
+
+// constellation threads between hubs sharing a checkpoint; rebuilt whenever
+// the set of open hubs changes
+function rebuildSpaceThreads() {
+  for (const key of [...beams.beams.keys()]) if (key.startsWith('space:')) beams.removeBeam(key);
+  const byCkpt = new Map();
+  for (const h of hubs) {
+    for (const n of h.graph.nodes.values()) {
+      for (const wg of n.widgets) {
+        if (wg.name === 'ckpt_name') {
+          if (!byCkpt.has(wg.value)) byCkpt.set(wg.value, []);
+          byCkpt.get(wg.value).push(h);
+        }
+      }
+    }
+  }
+  for (const [ckpt, hs] of byCkpt) {
+    for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
+      beams.addBeam(`space:${ckpt}:${i}:${j}`, hs[i].center().clone(), hs[j].center().clone(),
+        '#c5a3ff', { alpha: 0.14, bulge: 0.12, group: 'space' });
+    }
+  }
+}
+
 function pickTargets() {
   const out = [];
   for (const h of hubs) {
@@ -550,6 +736,8 @@ function pickTargets() {
     for (const gi of h.gallery) if (gi.mesh.visible) out.push(gi.mesh);
   }
   if (palette) out.push(palette.panel.mesh);
+  if (browser) out.push(browser.panel.mesh);
+  if (libraryPanel?.mesh) out.push(libraryPanel.mesh);
   if (wrist?.panel.mesh && renderer.xr.isPresenting) out.push(wrist.panel.mesh);
   return out;
 }
@@ -570,7 +758,7 @@ function pickRay() {
   return { object: h.object, panel, hub, gallery, rowInfo, dist: h.distance, uv: h.uv };
 }
 
-function reachable(hit) { return hit.dist < 10 || !!hit.object.userData.palette; }
+function reachable(hit) { return hit.dist < 10 || !!hit.object.userData.palette || !!hit.object.userData.library; }
 
 // Right corner of a node header is the ✕: tap to arm, tap again to delete.
 function inDeleteZone(hit) {
@@ -623,6 +811,7 @@ function isInteractive(ri) {
 function onClick(e) {
   const hit = pick(e);
   if (palette && (!hit || hit.panel !== palette.panel)) closePalette();
+  if (browser && (!hit || (hit.panel !== browser.panel && !hit.object.userData.library))) closeBrowser();
   if (!hit) return;
   const { panel, hub, gallery, rowInfo } = hit;
   if (gallery) {
@@ -756,6 +945,7 @@ function hubOpts() {
   return {
     audio,
     schema: SCHEMA,
+    onLayout: scheduleLayoutSave,
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onQueue: async (h) => {
@@ -787,12 +977,16 @@ async function boot() {
   setStatus();
   client.onModeChange = setStatus;
   client.onQueueCount = setStatus;
+  LAYOUTS = await client.loadLayouts();
   let list = [];
   try { list = await client.listLocalWorkflows(); } catch (e) { fail('workflow list failed: ' + e); }
   const jsons = [];
   for (const item of list) {
-    try { jsons.push({ name: item.name, json: await client.loadLocalWorkflow(item.name), source: 'local' }); }
-    catch (e) { fail(`load ${item.name}: ${e}`); }
+    if (item.name.startsWith('_')) continue;   // scratch files, not workflows
+    try {
+      const json = await client.loadLocalWorkflow(item.name);
+      if (Array.isArray(json.nodes) && json.nodes.length) jsons.push({ name: item.name, json, source: 'local' });
+    } catch (e) { fail(`load ${item.name}: ${e}`); }
   }
   // the user's real workflows, saved server-side by the ComfyUI frontend
   const userdata = await client.listUserdataWorkflows();
@@ -811,6 +1005,7 @@ async function boot() {
   const N = Math.max(jsons.length, 1);
   const ringR = Math.max(95, N * 10);
   jsons.forEach(({ name, json, source }, i) => {
+    applySidecarLayout(json, source, name);
     const graph = parseWorkflow(json, schema);
     const hub = new Hub(scene, beams, { name, graph, source }, hubOpts());
     const th = (i / N) * Math.PI * 2 - Math.PI / 2;
@@ -818,24 +1013,9 @@ async function boot() {
     hubs.push(hub);
   });
 
-  // constellation threads: hubs sharing a checkpoint
-  const byCkpt = new Map();
-  for (const h of hubs) {
-    for (const n of h.graph.nodes.values()) {
-      for (const wg of n.widgets) {
-        if (wg.name === 'ckpt_name') {
-          if (!byCkpt.has(wg.value)) byCkpt.set(wg.value, []);
-          byCkpt.get(wg.value).push(h);
-        }
-      }
-    }
-  }
-  for (const [ckpt, hs] of byCkpt) {
-    for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
-      beams.addBeam(`space:${ckpt}:${i}:${j}`, hs[i].center().clone(), hs[j].center().clone(),
-        '#c5a3ff', { alpha: 0.14, bulge: 0.12, group: 'space' });
-    }
-  }
+  rebuildSpaceThreads();
+  buildLibrary();
+  refreshWfIndex();
 
   // demo galleries so the rims aren't bare
   if (client.mode === 'demo') {
@@ -960,10 +1140,13 @@ async function accreteHub(name, json, bitmap) {
   if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
   let base = name.replace(/[\\/]/g, '_') || 'dropped', nm = base, i = 2;
   while (hubs.some(h => h.name === nm)) nm = `${base}-${i++}`;
+  applySidecarLayout(json, 'dropped', nm);
   const graph = parseWorkflow(json, SCHEMA);
   const hub = new Hub(scene, beams, { name: nm, graph, source: 'dropped' }, hubOpts());
   hub.setPosition(cam.pos.clone().add(forward().multiplyScalar(70)));
   hubs.push(hub);
+  rebuildSpaceThreads();
+  libraryPanel?.dirty();
   if (bitmap) hub.addGeneration(bitmap, '', { instant: true });
   audio.accrete();
   flashHint('unfolded ' + nm);
@@ -1079,7 +1262,7 @@ function xrSelectStart(st) {
     st.pullLast = st.c.position.clone();
     return;
   }
-  const vrReach = hit.dist < 14 || !!hit.object.userData.palette;
+  const vrReach = hit.dist < 14 || !!hit.object.userData.palette || !!hit.object.userData.library;
   const ri = hit.rowInfo;
   if (vrReach && ri) {
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
@@ -1268,6 +1451,16 @@ function tick(dt) {
     palette.panel.mesh.lookAt(camWorld);
     palette.panel.update(t);
   }
+  if (browser) {
+    browser.panel.mesh.lookAt(camWorld);
+    browser.panel.update(t);
+  }
+  if (libraryPanel) {
+    libraryPanel.mesh.lookAt(camWorld);
+    // scale with distance like sigils, so the library reads from the horizon
+    libraryPanel.mesh.scale.setScalar(Math.max(1, camWorld.distanceTo(libraryPanel.mesh.position) / 55));
+    libraryPanel.update(t);
+  }
   if (wrist && renderer.xr.isPresenting) wrist.panel.update(t);
 
   // occasional pulse along constellation threads
@@ -1309,6 +1502,7 @@ function tick(dt) {
 window.CVR = {
   hubs, cam, beams, client, camera, THREE,
   openPalette, pal: () => palette,
+  openBrowser, wf: () => browser, openWorkflow, closeWorkflow,
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },
