@@ -114,6 +114,11 @@ requires a secure context, and there are three ways to get one:
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
 | Back out | Esc | | |
 
+To leave VR with bare hands, look at your left wrist: a small watch
+panel carries an EXIT VR button (and live queue status). The system
+gesture also always works: palm up facing you, then pinch and hold the
+floating logo.
+
 Pinch works because Quest fires the same select events for hand tracking
 as for triggers, so every interaction is hand-native for free. Text
 entry stays on the desktop for now; a phone-as-keyboard companion is

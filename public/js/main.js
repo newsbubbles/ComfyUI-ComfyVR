@@ -504,6 +504,7 @@ function pickTargets() {
     for (const gi of h.gallery) if (gi.mesh.visible) out.push(gi.mesh);
   }
   if (palette) out.push(palette.panel.mesh);
+  if (wrist?.panel.mesh && renderer.xr.isPresenting) out.push(wrist.panel.mesh);
   return out;
 }
 
@@ -698,6 +699,7 @@ function flashHint(msg) {
 function setStatus() {
   const q = client.mode === 'live' && client.queueRemaining ? ` · ◈ ${client.queueRemaining} in queue` : '';
   statusChip.textContent = client.mode === 'live' ? '● LIVE ' + (client.backend || '') + q : '◌ DEMO — no ComfyUI backend';
+  wrist?.panel.dirty();
   statusChip.className = client.mode;
 }
 
@@ -959,6 +961,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   cam.anim = null; cam.dock = null;
 });
 renderer.xr.addEventListener('sessionend', () => {
+  disposeWrist();
   camera.getWorldPosition(camWorld);
   cam.pos.copy(camWorld);
   syncAngles(camWorld.clone().add(_f.set(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_q))));
@@ -967,9 +970,36 @@ renderer.xr.addEventListener('sessionend', () => {
   camera.position.copy(cam.pos);
 });
 
+// ---------- wrist HUD: the exit that bare hands lack, plus VR status ----------
+// The system escape (palm up, pinch the floating logo) is hidden knowledge;
+// a watch on the left wrist is not. Also the only HUD visible inside XR.
+let wrist = null;
+function attachWrist(grip) {
+  if (!wrist) {
+    const rows = [
+      readoutRow(() => (client.mode === 'live' ? '● LIVE' : '◌ DEMO'),
+                 () => (client.queueRemaining ? '◈ ' + client.queueRemaining + ' queued' : '')),
+      buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
+    ];
+    wrist = { panel: new Panel({ title: 'comfyvr', rows, worldWidth: 0.2 }) };
+  }
+  const mesh = wrist.panel.mesh || wrist.panel.placeFlat(grip, new THREE.Vector3());
+  if (mesh.parent !== grip) grip.add(mesh);
+  // watch-face pose: above the wrist, tilted toward the eyes. First pass,
+  // angles get tuned from in-headset reports.
+  mesh.position.set(0, 0.03, 0.1);
+  mesh.rotation.set(-1.0, 0, 0);
+  wrist.panel.foldAlpha = 1;
+  wrist.panel.dirty();
+}
+function disposeWrist() { if (wrist) { wrist.panel.dispose(); wrist = null; } }
+
 for (let ci = 0; ci < 2; ci++) {
   const c = renderer.xr.getController(ci);
   rig.add(c);
+  const grip = renderer.xr.getControllerGrip(ci);
+  rig.add(grip);
+  grip.addEventListener('connected', (e) => { if (e.data?.handedness === 'left') attachWrist(grip); });
   const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
   const rayLine = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({
     color: 0x7ce8dc, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthTest: false,
@@ -1192,6 +1222,7 @@ function tick(dt) {
     palette.panel.mesh.lookAt(camWorld);
     palette.panel.update(t);
   }
+  if (wrist && renderer.xr.isPresenting) wrist.panel.update(t);
 
   // occasional pulse along constellation threads
   spacePulseTimer -= dt;
