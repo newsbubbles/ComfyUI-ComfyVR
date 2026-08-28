@@ -7,7 +7,8 @@ import { colorForType } from './graph.js';
 
 export const PW = 512;                      // canvas px width
 const PAD = 18;
-export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24 };
+export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24, alert: 24 };
+const ERR = '#ff6a6a';
 const FONT = (px, bold) => `${bold ? 'bold ' : ''}${px}px Consolas, "Courier New", monospace`;
 const NOTE_MAX_LINES = 40;
 
@@ -207,9 +208,18 @@ export class Panel {
     // glass
     g.fillStyle = 'rgba(6,20,26,0.62)';
     roundRect(g, 1, 1, W - 2, H - 2, 10); g.fill();
-    g.strokeStyle = withAlpha(A, this.active > 0.02 ? 0.95 : 0.5);
-    g.lineWidth = this.active > 0.02 ? 2.5 : 1.25;
+    // errored panels flip to the red family until the next success or edit
+    const B = this.errorMsg ? ERR : A;
+    g.strokeStyle = withAlpha(B, this.errorMsg ? 0.95 : (this.active > 0.02 ? 0.95 : 0.5));
+    g.lineWidth = this.errorMsg || this.active > 0.02 ? 2.5 : 1.25;
     roundRect(g, 1, 1, W - 2, H - 2, 10); g.stroke();
+    if (this.errorMsg) {
+      g.fillStyle = withAlpha(ERR, 0.9);
+      g.font = FONT(12);
+      g.textAlign = 'right';
+      g.fillText('⚠', W - PAD - 60, ROW_H.header / 2 - 2);
+      g.textAlign = 'left';
+    }
     // header
     g.fillStyle = withAlpha(A, 0.14);
     g.fillRect(2, 2, W - 4, ROW_H.header - 6);
@@ -366,6 +376,15 @@ export class Panel {
         }
         break;
       }
+      case 'alert': {
+        const msg = r.get();
+        if (msg) {
+          g.fillStyle = withAlpha(ERR, 0.95);
+          g.font = FONT(13);
+          g.fillText('⚠ ' + clip(g, String(msg), W - 2 * PAD - 24), PAD, mid);
+        }
+        break;
+      }
       case 'readout': {
         g.fillStyle = withAlpha(A, 0.75);
         g.fillText(clip(g, r.get(), 260), PAD, mid);
@@ -403,6 +422,7 @@ export class Panel {
 
   foldAlpha = 1;
   hint = null;
+  errorMsg = null;
 
   dispose() {
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }
@@ -443,6 +463,7 @@ export function buttonRow(label, onClick) { return { kind: 'button', label, onCl
 export function progressRow(getter) { return { kind: 'progress', get: getter }; }
 export function imageRow(placeholder) { return { kind: 'image', img: null, placeholder }; }
 export function readoutRow(get, get2) { return { kind: 'readout', get, get2 }; }
+export function alertRow(get) { return { kind: 'alert', get }; }
 export function glyphRow(text, big = false) { return { kind: 'glyphs', text, big }; }
 
 // ------- small helpers -------

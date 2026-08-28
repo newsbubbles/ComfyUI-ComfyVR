@@ -126,10 +126,24 @@ export function schemaFromObjectInfo(objectInfo, types) {
       if (!sec) continue;
       for (const [name, spec] of Object.entries(sec)) {
         const [ts, cfg] = Array.isArray(spec) ? [spec[0], spec[1] || {}] : [spec, {}];
+        // forceInput: a widget-typed input the frontend renders as a link
+        // socket instead. It has NO widgets_values entry, so treating it as
+        // a widget consumes a stored value and shifts every value after it
+        // (weight_decay suddenly holds "adam"). Must be a link input here.
+        if (cfg.forceInput || cfg.defaultInput) {
+          inputs.push(l(name, Array.isArray(ts) ? 'COMBO' : ts));
+          continue;
+        }
         if (Array.isArray(ts)) {
           // image_upload combos (LoadImage and friends) pick files from the
           // input dir; panels preview them via /view?type=input
           inputs.push(w(name, 'combo', { options: ts, imageInput: !!cfg.image_upload }));
+        } else if (ts === 'COMBO' || Array.isArray(cfg.options)) {
+          // New-style combo (V3 schema): type "COMBO" with options in the
+          // config. Missing this turns the combo into a phantom link input,
+          // which drops it from the widget list and shifts every stored
+          // value after it into the wrong slot.
+          inputs.push(w(name, 'combo', { options: cfg.options || [], imageInput: !!cfg.image_upload }));
         } else if (ts === 'INT') {
           const seed = SEED_NAMES.includes(name) || cfg.control_after_generate;
           inputs.push(w(name, seed ? 'seed' : 'int', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 1e9, 1e9), step: cfg.step ?? 1 }));
@@ -139,6 +153,10 @@ export function schemaFromObjectInfo(objectInfo, types) {
           inputs.push(w(name, 'text', { oneline: !cfg.multiline }));
         } else if (ts === 'BOOLEAN') {
           inputs.push(w(name, 'toggle', {}));
+        } else if (typeof ts === 'string' && ts.includes('AUTOGROW')) {
+          // V3 dynamic input group: the workflow node carries the real
+          // sockets as dotted names (outputs.output0, outputs.output1, ...)
+          inputs.push({ name, kind: 'autogrow' });
         } else {
           inputs.push(l(name, ts));
         }
@@ -178,10 +196,32 @@ export function parseWorkflow(json, schema) {
     const linkInputs = [];
     if (sc) {
       let vi = 0;
+      // New-format nodes list every widget as an input entry carrying a
+      // `widget` key, in the node's own order. When that order accounts for
+      // every stored value, match values BY NAME: workflows saved against an
+      // older node definition (a widget added or reordered since) would
+      // otherwise shift every value after the change into the wrong slot.
+      const declaredW = (n.inputs || []).filter(i => i.widget).map(i => i.name);
+      const byName = declaredW.length && declaredW.length === stored.length
+        ? new Map(declaredW.map((nm, i) => [nm, stored[i]])) : null;
       for (const inp of sc.inputs) {
-        if (inp.kind === 'link') {
+        if (inp.kind === 'autogrow') {
+          for (const i of n.inputs || []) {
+            if (i.name === inp.name || i.name.startsWith(inp.name + '.')) {
+              linkInputs.push({ name: i.name, type: i.type || '*', link: i.link ?? null });
+            }
+          }
+        } else if (inp.kind === 'link') {
           const declared = (n.inputs || []).find(i => i.name === inp.name);
           linkInputs.push({ name: inp.name, type: inp.type, link: declared ? declared.link : null });
+        } else if (byName) {
+          const widget = { ...inp, value: byName.has(inp.name) ? byName.get(inp.name) : defaultFor(inp) };
+          if (sc.liveOptions && inp.wtype === 'combo' && Array.isArray(inp.options) && inp.options.length
+              && !inp.options.includes(widget.value)) {
+            widget.value = inp.options[0];
+            widget.substituted = true;
+          }
+          widgets.push(widget);
         } else {
           const widget = { ...inp, value: vi < stored.length ? stored[vi] : defaultFor(inp) };
           vi++;
@@ -222,10 +262,14 @@ export function parseWorkflow(json, schema) {
       }
     }
     const outputs = (n.outputs || []).map(o => ({ name: o.name, type: o.type, links: (o.links || []).filter(id => links.has(id)) }));
+    const declaredOrder = sc && (n.inputs || []).some(i => i.widget)
+      ? (n.inputs || []).filter(i => i.widget).map(i => i.name) : null;
     nodes.set(n.id, {
       id: n.id, type: n.type,
       title: n.title || (sc ? sc.display : (sub ? '⌬ subgraph' : n.type)),
       schema: sc || null, widgets, linkInputs, outputs,
+      // widget order the FILE declares; saves must respect it, not schema order
+      widgetOrder: declaredOrder && declaredOrder.length === stored.length ? declaredOrder : null,
       hasImage: !!(sc && sc.hasImage),
       subgraph: sub,
     });
@@ -302,7 +346,14 @@ export function syncToRaw(graph) {
   for (const n of graph.raw.nodes || []) {
     const live = graph.nodes.get(n.id);
     if (!live) continue;
-    if (live.schema) n.widgets_values = live.widgets.map(wg => wg.value);
+    if (live.schema) {
+      n.widgets_values = live.widgetOrder
+        ? live.widgetOrder.map((nm, i) => {
+            const wg = live.widgets.find(x => x.name === nm);
+            return wg ? wg.value : (n.widgets_values || [])[i];
+          })
+        : live.widgets.map(wg => wg.value);
+    }
     for (const inp of n.inputs || []) {
       const li = live.linkInputs.find(l => l.name === inp.name);
       if (li) inp.link = li.link;
@@ -374,6 +425,7 @@ export function addNodeToGraph(graph, type, sc) {
   const widgets = [];
   const linkInputs = [];
   for (const inp of sc.inputs) {
+    if (inp.kind === 'autogrow') continue;  // fresh nodes start with no grown slots
     if (inp.kind === 'link') linkInputs.push({ name: inp.name, type: inp.type, link: null });
     else {
       widgets.push({ ...inp, value: defaultFor(inp) });

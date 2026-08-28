@@ -612,7 +612,8 @@ function flashHint(msg) {
   hintTimer = setTimeout(() => (hintEl.style.opacity = 0.35), 2600);
 }
 function setStatus() {
-  statusChip.textContent = client.mode === 'live' ? '● LIVE ' + (client.backend || '') : '◌ DEMO — no ComfyUI backend';
+  const q = client.mode === 'live' && client.queueRemaining ? ` · ◈ ${client.queueRemaining} in queue` : '';
+  statusChip.textContent = client.mode === 'live' ? '● LIVE ' + (client.backend || '') + q : '◌ DEMO — no ComfyUI backend';
   statusChip.className = client.mode;
 }
 
@@ -629,10 +630,12 @@ function hubOpts() {
       audio.queueSweep();
       try {
         await client.queue(h);
+        h.clearErrors();
         h.afterQueued();   // the queued run has its seeds; move them on
         flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
       } catch (e) {
         h.onStatus('error');
+        h.reportQueueError(e);
         flashHint(String(e.message || e));
         audio.toggle(false);
       }
@@ -651,6 +654,7 @@ async function boot() {
   await client.detect();
   setStatus();
   client.onModeChange = setStatus;
+  client.onQueueCount = setStatus;
   let list = [];
   try { list = await client.listLocalWorkflows(); } catch (e) { fail('workflow list failed: ' + e); }
   const jsons = [];

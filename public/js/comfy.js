@@ -172,8 +172,13 @@ export class ComfyClient {
       case 'execution_success':
       case 'execution_error':
       case 'execution_interrupted':
+        if (msg.type === 'execution_error') hub?.onExecError(d);
         hub?.onStatus(msg.type === 'execution_success' ? 'done' : 'error');
         if (d.prompt_id) this.prompts.delete(d.prompt_id);
+        break;
+      case 'status':
+        this.queueRemaining = d.status?.exec_info?.queue_remaining ?? this.queueRemaining ?? 0;
+        this.onQueueCount?.(this.queueRemaining);
         break;
     }
   }
@@ -196,9 +201,12 @@ export class ComfyClient {
       hub.onStatus('queued');
       return j.prompt_id;
     }
-    hub.onStatus('error');
+    // Rejection carries the real story: error.message plus node_errors
+    // keyed by node id. Throw it all so the caller can light up panels.
     console.warn('queue rejected', j);
-    return null;
+    const err = new Error(j.error?.message || `queue rejected (HTTP ${r.status})`);
+    err.nodeErrors = j.node_errors || null;
+    throw err;
   }
 
   // ---------- demo path: same events, fabricated ----------

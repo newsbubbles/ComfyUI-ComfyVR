@@ -4,7 +4,7 @@
 // core, beams arcing tier to tier, gallery of generations on the rim.
 import * as THREE from 'three';
 import { topoLayers, colorForType, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph } from './graph.js';
-import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow } from './panels.js';
+import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow, alertRow } from './panels.js';
 
 const R0 = 7;          // ring 0 radius
 const DR = 4.6;        // radius step per depth
@@ -213,6 +213,7 @@ export class Hub {
   buildCore() {
     const rows = [
       readoutRow(() => `depth ${this.maxDepth + 1} · ${this.graph.nodes.size} nodes`, () => this.flashMsg || this.status.toUpperCase()),
+      alertRow(() => this.lastError),
       progressRow(() => this.progress),
       buttonRow('◈ QUEUE', () => this.opts.onQueue(this)),
       buttonRow('⟳ RESEED · SAVE ⬡', (frac) => (frac < 0.5 ? this.reseed() : this.opts.onSave(this))),
@@ -222,7 +223,7 @@ export class Hub {
     this.corePanel.placeFlat(this.group, new THREE.Vector3(0, 0.9, 0));
     this.corePanel.mesh.userData.hub = this;
     this.corePanel.foldAlpha = 0;
-    this.coreImageRow = rows[4];
+    this.coreImageRow = rows[rows.length - 1];
     this.corePanel.dirty();
   }
 
@@ -425,8 +426,50 @@ export class Hub {
     return this.pushGalleryMesh(assetPlacard(asset), { ...opts, asset });
   }
 
+  // ---------- errors: rejection payloads land on the panels that caused them ----------
+  onExecError(d) {
+    const msg = `${d.exception_type || 'error'}: ${String(d.exception_message || '').split('\n')[0]}`;
+    this.lastError = msg;
+    const p = this.panels.get(Number(d.node_id));
+    if (p) { p.errorMsg = msg; p.dirty(); }
+    this.flash('⚠ RUN FAILED');
+    this.corePanel?.dirty();
+    this.opts.audio?.toggle(false);
+  }
+
+  setNodeErrors(nodeErrors) {
+    for (const [id, e] of Object.entries(nodeErrors || {})) {
+      const p = this.panels.get(Number(id));
+      if (!p) continue;
+      const first = (e.errors || [])[0];
+      p.errorMsg = first
+        ? `${first.message}${first.extra_info?.input_name ? ` (${first.extra_info.input_name})` : ''}`
+        : 'invalid';
+      p.dirty();
+    }
+  }
+
+  reportQueueError(e) {
+    this.lastError = String(e.message || e);
+    if (e.nodeErrors) this.setNodeErrors(e.nodeErrors);
+    this.flash('⚠ QUEUE REJECTED');
+    this.corePanel?.dirty();
+  }
+
+  clearErrors() {
+    if (!this.lastError && ![...this.panels.values()].some(p => p.errorMsg)) return;
+    this.lastError = null;
+    for (const p of this.panels.values()) if (p.errorMsg) { p.errorMsg = null; p.dirty(); }
+    this.corePanel?.dirty();
+  }
+
   // ---------- edits ----------
-  onEdited(node) { this.opts.onEdit?.(this, node); }
+  onEdited(node) {
+    // touching an errored node clears its red state: the edit is the retry
+    const p = this.panels.get(node.id);
+    if (p?.errorMsg) { p.errorMsg = null; p.dirty(); }
+    this.opts.onEdit?.(this, node);
+  }
 
   reseed() { randomizeSeeds(this.graph); for (const p of this.panels.values()) p.dirty(); this.opts.audio?.toggle(true); }
 
