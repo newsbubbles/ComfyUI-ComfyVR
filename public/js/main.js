@@ -503,8 +503,8 @@ function buildPalette() {
   const slice = items.slice(palette.page * PAGE, palette.page * PAGE + PAGE);
   const inCat = palette.mode === 'list' && palette.cat;
   const rows = [
-    readoutRow(() => (palette.query ? '⌕ ' + palette.query : '⌕ type to filter'),
-               () => (inCat ? '⌸ ' + palette.cat : '')),
+    readoutRow(() => (palette?.query ? '⌕ ' + palette.query : '⌕ type to filter'),
+               () => (inCat && palette ? '⌸ ' + palette.cat : '')),
     palette.mode === 'cats' || inCat
       ? buttonRow('◂ BACK', () => { palette.mode = 'list'; palette.cat = null; palette.page = 0; buildPalette(); audio.tick(); })
       : buttonRow('⌸ BROWSE CATEGORIES', () => { palette.mode = 'cats'; palette.page = 0; buildPalette(); audio.tick(); }),
@@ -536,6 +536,7 @@ function openPalette(drag) {
 }
 function closePalette() {
   if (!palette) return;
+  if (hotPanel === palette.panel) hotPanel = null;   // never re-hot a disposed panel
   palette.panel?.dispose();
   palette = null;
 }

@@ -178,7 +178,7 @@ export class Panel {
     return this.mesh.localToWorld(out);
   }
 
-  dirty() { redrawQueue.add(this); }
+  dirty() { if (!this.disposed) redrawQueue.add(this); }
 
   rowAt(u, vTop) {
     const y = vTop * this.pxH;
@@ -439,6 +439,7 @@ export class Panel {
   deleteArmed = false;
 
   dispose() {
+    this.disposed = true;   // a disposed panel must never re-enter the redraw queue
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }
     this.mat.dispose(); this.tex.dispose();
     redrawQueue.delete(this);
