@@ -64,7 +64,11 @@ backend at all so you can explore the space cold.
   at.
 - **Real execution**: queue from inside the space. Websocket events
   drive panel glow, progress bars, live preview at the hub core, and
-  finished images flying up to the gallery.
+  finished images flying up to the gallery. The HUD shows queue depth.
+- **Errors you can see**: a rejected or failed run lights the exact
+  node that caused it red, with the message readable at the hub core.
+  Editing that node clears it. Works with custom node packs, including
+  V3 style nodes with dynamic input groups.
 - **3D outputs**: GLB, OBJ, and PLY results get a placard. Click it and
   the real asset materializes at human scale, lit and slowly turning.
   Gaussian splat PLYs show as point clouds for now.
@@ -155,15 +159,12 @@ What does not work yet, so you know before you fly:
 - **Gaussian splat PLYs show as point clouds**, not splats.
 - **No back-out gesture in VR yet.** Leave a hub by flying away or
   pinching another sigil.
-- **Errors are terse.** A failed run turns the hub red but does not yet
-  point at the node that caused it. A full error overhaul is next.
 
 ## Roadmap
 
 The goal: the most natural place to run, tend, and remix generative
 workflows, on a screen or standing inside them. In rough order:
 
-- Readable errors on the panel that caused them.
 - Workflow browser: open and close any of your workflows from inside
   the space, no cap.
 - Layout memory for every workflow, without touching your files.
