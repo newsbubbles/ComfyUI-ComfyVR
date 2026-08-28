@@ -293,6 +293,13 @@ export class Hub {
     this.beacon.scale.setScalar(18 * far * pulse);
 
     for (const gImg of this.gallery) {
+      if (gImg.birthT < 8) {
+        gImg.birthT += dt;
+        gImg.mesh.scale.setScalar(0.2 + 0.8 * Math.min(1, gImg.birthT / 0.5));
+        const f = ease(Math.max(0, Math.min(1, (gImg.birthT - 3) / 4)));  // hold 3s, fly 4s
+        gImg.mesh.position.lerpVectors(gImg.from, gImg.to, f);
+        gImg.mesh.position.y += Math.sin(f * Math.PI) * 3;
+      }
       gImg.mesh.material.opacity = 0.9 * ft * (0.92 + 0.08 * Math.sin(t * 2 + gImg.phase));
       gImg.mesh.visible = ft > 0.01;
     }
@@ -350,7 +357,11 @@ export class Hub {
   }
 
   // ---------- gallery ----------
-  addGeneration(bitmap, caption = '') {
+  // Generations cluster on the rim around the DAG's mean bearing (the side
+  // you face from the stand point), newest nearest the center. A fresh one
+  // is BORN beside the core — where you were watching the preview — holds a
+  // few seconds, then flies up to its slot.
+  addGeneration(bitmap, caption = '', { instant = false } = {}) {
     const tex = new THREE.CanvasTexture(frameImage(bitmap, caption));
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
@@ -362,11 +373,13 @@ export class Hub {
     mesh.userData.hub = this;
     mesh.userData.gallery = true;
     const i = this.gallery.length;
-    const theta = i * 2.399963;                     // golden angle around the rim
+    const slotAngle = this.meanAngle + Math.ceil(i / 2) * 0.42 * (i % 2 ? 1 : -1);
     const r = this.rimRadius + 1.5;
-    mesh.position.set(Math.cos(theta) * r, this.rimY + 2 + (i % 3) * 1.3, Math.sin(theta) * r);
+    const to = new THREE.Vector3(Math.cos(slotAngle) * r, this.rimY + 2 + (i % 3) * 1.3, Math.sin(slotAngle) * r);
+    const from = new THREE.Vector3(-Math.cos(this.meanAngle) * 2.6, 4.0, -Math.sin(this.meanAngle) * 2.6);
+    mesh.position.copy(instant ? to : from);
     this.group.add(mesh);
-    this.gallery.push({ mesh, tex, phase: Math.random() * 6.28 });
+    this.gallery.push({ mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to });
   }
 
   // ---------- edits ----------

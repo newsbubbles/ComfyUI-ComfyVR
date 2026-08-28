@@ -89,7 +89,18 @@ panel degrades toward a 2D card.
 - **M1.5**: node delete, drag-drop of workflow JSON / PNG-with-embedded-
   workflow into the space (provenance accretion), ComfyUI userdata workflow
   listing, history back-fill of galleries, object_info-wide palette search.
-- **M2**: WebXR + phone keyboard companion; multi-client presence.
+- **M2 (foundation in)**: WebXR. ENTER VR button appears when a headset is
+  reachable; the fly/dock logic moves a rig while the headset drives the
+  camera. Controller rays reuse the exact desktop interaction layer (dock,
+  widgets, header-move, port-drag rewiring, palette) via select events —
+  which Quest also emits for hand-tracked pinch, so hands work wherever
+  controllers do. Left stick flies along gaze, right stick snap-turns 30°
+  and moves vertically; flyTo teleports instead of gliding for comfort.
+  Text entry stays on desktop until the phone-keyboard companion.
+  **Connecting a Quest**: WebXR needs a secure context. Either
+  `adb reverse tcp:8189 tcp:8189` and open http://localhost:8189 in the
+  Quest browser (localhost is exempt), or tunnel https (cloudflared).
+  Still ahead in M2: phone keyboard, multi-client presence, hand meshes.
 
 ## Non-goals (for now)
 

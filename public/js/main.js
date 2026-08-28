@@ -19,10 +19,19 @@ window.addEventListener('unhandledrejection', (e) => fail(String(e.reason)));
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x01050a);
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 3000);
+// In XR the headset drives the camera's local pose; the rig is what our
+// fly/dock logic moves. On desktop the rig sits at origin and the camera
+// is driven directly, exactly as before.
+const rig = new THREE.Group();
+rig.add(camera);
+scene.add(rig);
+const camWorld = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -117,6 +126,13 @@ function syncAngles(look) {
 syncAngles(new THREE.Vector3(0, 0, 0));
 
 function flyTo(p1, l1, dur = 1.6, then = null) {
+  if (renderer.xr.isPresenting) {
+    // comfort: teleport instead of gliding while the headset is on
+    cam.pos.copy(p1);
+    cam.anim = null; cam.dock = null;
+    then?.();
+    return;
+  }
   const l0 = cam.pos.clone().add(forward().multiplyScalar(10));
   cam.anim = { t: 0, dur, p0: cam.pos.clone(), p1: p1.clone(), l0, l1: l1.clone(), then };
   cam.dock = null;
@@ -297,8 +313,8 @@ function beginMove(pg, e) {
   dragMode = 'move';
   audio.tick();
 }
-function doMove(e) {
-  setRay(e);
+function doMove(e) { setRay(e); doMoveRay(); }
+function doMoveRay() {
   const at = rayCylinder(moveDrag.hub, moveDrag.panel.placement.r);
   if (at) moveDrag.hub.moveNode(moveDrag.id, at.theta + moveDrag.offT, at.y + moveDrag.offY);
 }
@@ -336,13 +352,14 @@ function beginLink(drag) {
   for (const p of drag.hub.panels.values()) p.setHint({ type: drag.type, dir: 'in' });
   audio.tick();
 }
-function doLinkDrag(e) {
-  setRay(e);
-  const dist = Math.max(4, linkDrag.A.distanceTo(camera.position));
+function doLinkDrag(e) { setRay(e); doLinkDragRay(); }
+function doLinkDragRay() {
+  const dist = Math.max(4, linkDrag.A.distanceTo(camWorld));
   linkDrag.drop = raycaster.ray.at(dist, new THREE.Vector3());
   beams.updateBeam('::drag', linkDrag.A, linkDrag.drop);
 }
-function endLink(e) {
+function endLink(e) { finishLink(pick(e)); }
+function finishLink(hit) {
   const drag = linkDrag;
   linkDrag = null;
   beams.removeBeam('::drag');
@@ -351,7 +368,6 @@ function endLink(e) {
     const b = beams.beams.get(drag.hub.beamKey(drag.linkId));
     if (b) b.line.visible = true;
   }
-  const hit = pick(e);
   if (hit && hit.hub === drag.hub && hit.rowInfo?.kind === 'port') {
     const s = portSlotAt(hit);
     if (s && s.dir === 'in' && s.type === drag.type) {
@@ -404,7 +420,10 @@ function pickTargets() {
 }
 
 function pick(e) {
-  raycaster.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
+  setRay(e);
+  return pickRay();
+}
+function pickRay() {
   const hits = raycaster.intersectObjects(pickTargets(), false);
   const h = hits[0];
   if (!h) return null;
@@ -495,9 +514,12 @@ function interact(panel, hub, ri) {
 
 function applySlider(hit, e, fresh) {
   const ri = fresh?.rowInfo?.row === hit.rowInfo.row ? fresh.rowInfo : hit.rowInfo;
-  const row = hit.rowInfo.row, wg = row.widget;
+  applySliderFrac(hit.panel, hit.rowInfo.row, ri.frac);
+}
+function applySliderFrac(panel, row, frac) {
+  const wg = row.widget;
   // slider bar spans px 196..398 of the canvas
-  const cx = (ri.frac ?? 0) * (PW - 36) + 18;
+  const cx = (frac ?? 0) * (PW - 36) + 18;
   const f = THREE.MathUtils.clamp((cx - 196) / 202, 0, 1);
   let v = row.min + f * (row.max - row.min);
   if (row.step) v = Math.round(v / row.step) * row.step;
@@ -507,7 +529,7 @@ function applySlider(hit, e, fresh) {
     wg.value = v;
     audio.zip(f);
     row.onChange?.();
-    hit.panel.dirty();
+    panel.dirty();
   }
 }
 
@@ -629,11 +651,11 @@ async function boot() {
 
   // demo galleries so the rims aren't bare
   if (client.mode === 'demo') {
-    for (const h of hubs) for (let k = 0; k < 3; k++) h.addGeneration(demoImage(h, null), '');
+    for (const h of hubs) for (let k = 0; k < 3; k++) h.addGeneration(demoImage(h, null), '', { instant: true });
   }
 
   $('veil').classList.add('gone');
-  flashHint('drag look · wasd/qe drift · shift hurry · click sigils and panels · esc back · m mute');
+  flashHint('drag look · wasd/qe drift · click sigils/panels · drag headers to move nodes · drop a comfy png · esc back · m mute');
 
   backfillHistory().catch((e) => console.warn('history backfill', e));
 }
@@ -670,7 +692,7 @@ async function backfillHistory() {
       for (const im of out.images || []) {
         if (im.type !== 'output' || hub.gallery.length >= 8) continue;
         try {
-          hub.addGeneration(await client.imageBitmap(im));
+          hub.addGeneration(await client.imageBitmap(im), '', { instant: true });
           recalled++;
         } catch (err) { /* image may have been deleted from disk */ }
       }
@@ -750,11 +772,184 @@ async function accreteHub(name, json, bitmap) {
   const hub = new Hub(scene, beams, { name: nm, graph, source: 'dropped' }, hubOpts());
   hub.setPosition(cam.pos.clone().add(forward().multiplyScalar(70)));
   hubs.push(hub);
-  if (bitmap) hub.addGeneration(bitmap);
+  if (bitmap) hub.addGeneration(bitmap, '', { instant: true });
   audio.accrete();
   flashHint('accreted ' + nm);
   flyToHub(hub);
   return hub;
+}
+
+// ---------- WebXR: the same space, headset on ----------
+// Controllers AND hands share one input layer: Quest exposes hand-tracked
+// pinch as select events on the same input sources, so every interaction
+// below works with bare hands for free.
+const xrState = { yaw: 0, turnLatch: false, controllers: [] };
+const _mat4 = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
+const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _v3 = new THREE.Vector3();
+
+if (navigator.xr?.isSessionSupported) {
+  navigator.xr.isSessionSupported('immersive-vr').then((ok) => {
+    if (!ok) return;
+    const b = document.createElement('button');
+    b.textContent = '◈ ENTER VR';
+    b.style.cssText = 'position:absolute;bottom:14px;right:16px;pointer-events:auto;background:rgba(124,232,220,0.12);color:#7ce8dc;border:1px solid rgba(124,232,220,0.5);border-radius:4px;padding:8px 18px;cursor:pointer;letter-spacing:2px;font-family:Consolas,monospace;';
+    $('hud').appendChild(b);
+    b.onclick = async () => {
+      try {
+        const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'hand-tracking'] });
+        renderer.xr.setSession(s);
+      } catch (e) { fail('xr session: ' + e); }
+    };
+  }).catch(() => {});
+}
+renderer.xr.addEventListener('sessionstart', () => {
+  audio.ensure();
+  xrState.yaw = cam.yaw;              // keep facing what you faced
+  cam.anim = null; cam.dock = null;
+});
+renderer.xr.addEventListener('sessionend', () => {
+  camera.getWorldPosition(camWorld);
+  cam.pos.copy(camWorld);
+  syncAngles(camWorld.clone().add(_f.set(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(_q))));
+  rig.position.set(0, 0, 0);
+  rig.rotation.y = 0;
+  camera.position.copy(cam.pos);
+});
+
+for (let ci = 0; ci < 2; ci++) {
+  const c = renderer.xr.getController(ci);
+  rig.add(c);
+  const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
+  const rayLine = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({
+    color: 0x7ce8dc, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthTest: false,
+  }));
+  rayLine.scale.z = 10;
+  c.add(rayLine);
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xbffff4, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthTest: false })
+  );
+  dot.renderOrder = 30;
+  dot.visible = false;
+  scene.add(dot);
+  const st = { c, rayLine, dot, hit: null, mode: null };
+  c.addEventListener('selectstart', () => xrSelectStart(st));
+  c.addEventListener('selectend', () => xrSelectEnd(st));
+  xrState.controllers.push(st);
+}
+
+function setRayFromController(c) {
+  _mat4.identity().extractRotation(c.matrixWorld);
+  raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_mat4);
+}
+
+function xrSelectStart(st) {
+  const hit = st.hit;
+  if (!hit) return;
+  const vrReach = hit.dist < 14 || !!hit.object.userData.palette;
+  const ri = hit.rowInfo;
+  if (vrReach && ri) {
+    if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
+    if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) {
+      setRayFromController(st.c);
+      const p = hit.panel;
+      const at = rayCylinder(hit.hub, p.placement.r);
+      moveDrag = { hub: hit.hub, panel: p, id: p.userData.nodeId, offT: at ? wrapAng(p.placement.theta - at.theta) : 0, offY: at ? p.placement.y - at.y : 0 };
+      st.mode = 'move';
+      audio.tick();
+      return;
+    }
+    if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null && !linkDrag) {
+      const s = portSlotAt(hit);
+      if (s && s.dir === 'out') {
+        beginLink({ mode: 'new', hub: hit.hub, type: s.type, srcNode: s.node.id, srcSlot: s.index });
+        if (linkDrag) st.mode = 'link';
+      } else if (s && s.dir === 'in' && s.node.linkInputs[s.index]?.link != null) {
+        const L = hit.hub.graph.links.get(s.node.linkInputs[s.index].link);
+        if (L) {
+          beginLink({ mode: 'retarget', hub: hit.hub, type: L.type, srcNode: L.src, srcSlot: L.srcSlot, linkId: L.id });
+          if (linkDrag) st.mode = 'link';
+        }
+      }
+      return;
+    }
+    if (isInteractive(ri)) {
+      if (ri.kind === 'text') return;   // text entry stays on desktop until the phone companion
+      interact(hit.panel, hit.hub, ri);
+      return;
+    }
+  }
+  if (hit.gallery) return;
+  if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
+  if (hit.panel && hit.hub) dockToPanel(hit.panel, hit.hub);
+}
+
+function xrSelectEnd(st) {
+  if (st.mode === 'link' && linkDrag) finishLink(st.hit);
+  if (st.mode === 'move') endMove();
+  if (st.mode === 'slider') audio.tick();
+  st.mode = null;
+  dragMode = null; sliderDrag = null; pendingGrab = null;
+}
+
+function xrControllersTick() {
+  for (const st of xrState.controllers) {
+    setRayFromController(st.c);
+    if (st.mode === 'move' && moveDrag) { doMoveRay(); st.dot.visible = false; continue; }
+    if (st.mode === 'link' && linkDrag) { doLinkDragRay(); st.hit = pickRay(); continue; }
+    if (st.mode === 'slider' && st.hit) {
+      const h2 = pickRay();
+      if (h2 && h2.panel === st.hit.panel && h2.rowInfo?.row === st.hit.rowInfo?.row) {
+        applySliderFrac(h2.panel, h2.rowInfo.row, h2.rowInfo.frac);
+      }
+      continue;
+    }
+    const hit = pickRay();
+    st.hit = hit;
+    if (hit) {
+      st.rayLine.scale.z = Math.max(0.3, hit.dist);
+      st.dot.visible = true;
+      st.dot.position.copy(raycaster.ray.at(hit.dist, _v3));
+      if (hit.panel && hit.rowInfo?.row && hit.dist < 14) {
+        if (hit.panel.hot !== hit.rowInfo.row) audio.tick();
+        hit.panel.setHot(hit.rowInfo.row);
+      }
+    } else {
+      st.rayLine.scale.z = 10;
+      st.dot.visible = false;
+    }
+  }
+}
+
+function xrTick(dt) {
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  for (const src of session.inputSources) {
+    const gp = src.gamepad;
+    if (!gp) continue;                       // hands: no sticks, pinch = select
+    const x = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
+    const y = gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0);
+    if (src.handedness === 'left') {
+      if (Math.abs(x) > 0.15 || Math.abs(y) > 0.15) {
+        camera.getWorldQuaternion(_q);
+        _f.set(0, 0, -1).applyQuaternion(_q); _f.y = 0; _f.normalize();
+        _r.crossVectors(_f, UP);
+        cam.pos.addScaledVector(_f, -y * dt * 10).addScaledVector(_r, x * dt * 10);
+        cam.dock = null;
+      }
+    } else {
+      if (Math.abs(x) > 0.7 && !xrState.turnLatch) {
+        xrState.yaw -= Math.sign(x) * Math.PI / 6;
+        xrState.turnLatch = true;
+        audio.tick();
+      }
+      if (Math.abs(x) < 0.3) xrState.turnLatch = false;
+      if (Math.abs(y) > 0.2) cam.pos.y += -y * dt * 6;
+    }
+  }
+  xrControllersTick();
 }
 
 // ---------- frame loop ----------
@@ -762,17 +957,21 @@ const clock = new THREE.Clock();
 let spacePulseTimer = 0;
 let simT = 0;
 
-function frame() {
-  requestAnimationFrame(frame);
-  tick(Math.min(clock.getDelta(), 0.05));
-}
+// setAnimationLoop instead of rAF: required for WebXR frame pacing, and
+// identical on desktop.
+renderer.setAnimationLoop(() => tick(Math.min(clock.getDelta(), 0.05)));
 
 function tick(dt) {
   simT += dt;
   const t = simT;
 
-  // camera animation
-  if (cam.anim) {
+  // camera: headset drives the view in XR (we move the rig); desktop as before
+  const xrOn = renderer.xr.isPresenting;
+  if (xrOn) {
+    xrTick(dt);
+    rig.position.copy(cam.pos);
+    rig.rotation.y = xrState.yaw;
+  } else if (cam.anim) {
     const a = cam.anim;
     a.t += dt / a.dur;
     const f = a.t >= 1 ? 1 : a.t * a.t * (3 - 2 * a.t);
@@ -814,13 +1013,15 @@ function tick(dt) {
     camera.lookAt(look);
   }
 
+  camera.getWorldPosition(camWorld);
+
   // hubs
   for (const h of hubs) {
-    h.update(dt, t, cam.pos);
-    h.billboards(camera.position);
+    h.update(dt, t, camWorld);
+    h.billboards(camWorld);
   }
   if (palette) {
-    palette.panel.mesh.lookAt(camera.position);
+    palette.panel.mesh.lookAt(camWorld);
     palette.panel.update(t);
   }
 
@@ -842,7 +1043,7 @@ function tick(dt) {
       for (let a = 0; a < 3; a++) {
         const idx = i * 3 + a;
         let v = p.array[idx];
-        const c = a === 0 ? cam.pos.x : a === 1 ? cam.pos.y : cam.pos.z;
+        const c = a === 0 ? camWorld.x : a === 1 ? camWorld.y : camWorld.z;
         while (v - c > WRAP / 2) v -= WRAP;
         while (v - c < -WRAP / 2) v += WRAP;
         p.array[idx] = v;
@@ -852,12 +1053,11 @@ function tick(dt) {
     p.needsUpdate = true;
   }
   window._sky.material.uniforms.uT.value = t;
-  window._sky.position.copy(cam.pos);
+  window._sky.position.copy(camWorld);
 
   pumpRedraws(t, 4);
   renderer.render(scene, camera);
 }
-frame();
 
 // Debug handle: drives the loop manually when rAF is throttled (hidden
 // pane), and snapshots the GL canvas without preserveDrawingBuffer.
