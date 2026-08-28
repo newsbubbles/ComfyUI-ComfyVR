@@ -107,3 +107,34 @@ panel degrades toward a 2D card.
 Group nodes/subgraphs, node bypass modes, custom-node widget exotica
 (IMAGEUPLOAD is faked as a combo), text legibility at distance (vibe first),
 persistence of camera/space state.
+
+## Interface primitives (open design thread, 2026-08-28)
+
+Everything selectable in the space today is a list of buttons on a panel.
+That was the right first primitive, and it is starting to strain: the
+add-node palette wants hundreds of items, the coming workflow browser wants
+dozens of rich ones, and nodes themselves sometimes want more surface than
+a stack of rows. Candidate primitives, roughly from cheap to wild:
+
+- **Paged list** (have it): buttons + a pager row. Pinch-native, low
+  information density.
+- **Category tree** (have it): drill-down with counts. Good when the
+  taxonomy is real, useless when it is not.
+- **Groups / sections inside a panel**: collapsible row groups, or
+  swipeable pages within one node panel (basic | advanced | help), so a
+  40-widget node does not become a tower.
+- **Miniature previews**: instead of a name, show the thing. The workflow
+  browser could render each workflow as a tiny frozen constellation (its
+  sigil glyph plus a thumbnail of its ring structure), clustered and
+  organized in a small volume. Recognition beats reading, especially in a
+  headset. Same idea scales down: a node type in the palette could show a
+  micro-panel of its ports instead of just its name.
+- **Spatial pickers**: a collection laid onto a surface primitive chosen
+  for its shape: ring for peers (the constellation horizon already does
+  this), column for ordered depth, sphere shell for large unordered sets.
+  Which primitive a collection wants is a design decision per collection,
+  not a default.
+
+Rule of thumb worth testing: text is for search, shape is for recognition,
+place is for memory. A browser you visit twice should let you find the
+thing by remembering WHERE it was.
