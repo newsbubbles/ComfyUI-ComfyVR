@@ -3,3 +3,7 @@ __pycache__/
 workflows/_snap.json
 certs/
 layouts/
+workflows/*
+!workflows/portrait-sdxl.json
+!workflows/hires-lora.json
+!workflows/img2img-remix.json
