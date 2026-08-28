@@ -170,6 +170,9 @@ workflows, on a screen or standing inside them. In rough order:
 - Layout memory for every workflow, without touching your files.
 - Creating workflows: start an empty one from a template, grow it node
   by node, save it. Node delete comes with this.
+- Node search that works in VR: fuzzy matching like the stock
+  frontend, plus category browsing you can pinch through without a
+  keyboard, and eventually semantic search over node descriptions.
 - Image upload from inside the headset. The browser file picker on
   Quest reaches headset storage, including your screenshots and
   downloads, so feeding a LoadImage node from the headset gallery is a

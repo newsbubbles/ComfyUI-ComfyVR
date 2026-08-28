@@ -129,6 +129,29 @@ then the error handling overhaul (design below). The hosted demo page
 (design below) rides whenever a gap opens. Widget coverage research
 (below) feeds both spikes.
 
+### Node search (research done 2026-08-28)
+
+How the stock ComfyUI frontend searches nodes, from the installed
+frontend bundle and server source:
+
+- There is NO backend search endpoint. `/object_info` is the full dump
+  and the frontend searches it client-side.
+- The search is Fuse.js fuzzy matching over exactly three keys:
+  `name`, `display_name`, `search_aliases` (node classes may declare
+  `SEARCH_ALIASES`, shipped through object_info). No regex, no
+  embeddings. Category and description are used for grouping and
+  filter chips, not fuzzy matching.
+
+Implications for comfyvr: we already cache full object_info in live
+mode, so matching stock behavior is a small client-side scorer over
+the same three keys (vendor fuse.js for exact parity, or a
+dependency-free subsequence scorer). The VR answer is threefold:
+fuzzy text where a keyboard exists; a pinch-only category drill-down
+from the `category` paths (`sampling/custom` etc); and voice via the
+JARVIS layer, where STT + fuzzy is a natural pair because fuzzy
+absorbs transcription errors. Semantic search over node descriptions
+and tooltips (embeddings) is an upgrade nobody ships today; roadmap.
+
 ## Editing scope (position, not backlog)
 
 How much of the ComfyUI interface is this trying to be? Position: all
