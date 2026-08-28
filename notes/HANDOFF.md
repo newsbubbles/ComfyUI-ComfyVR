@@ -179,6 +179,34 @@ node delete, palette open anywhere (search all node types, not just
 link-compatible ones), then a new-empty-workflow hub seeded from a
 template. Anything past that has to earn its place in VR terms.
 
+### Spike 3: real gaussian splats (defined 2026-08-28)
+
+Today splat PLYs materialize as point clouds (raw gaussian centers).
+The real thing needs per-splat covariance, opacity, and depth-sorted
+alpha blending. Plan:
+
+- **Renderer**: vendor `@mkkellogg/gaussian-splats-3d` (three r160
+  compatible) and try it first; if its worker setup fights our
+  no-build vendoring, fall back to a minimal in-house renderer
+  (instanced quads + a sort worker, the antimatter15 shape, a few
+  hundred lines).
+- **Detection** in assets.js: gaussian PLYs are recognizable from the
+  header (`f_dc_0`, `scale_0`, `rot_0` properties); also accept
+  `.splat`, `.ksplat`, `.spz`. Mesh PLYs keep the current path.
+- **Quest budget**: decimate at load, ranked by opacity times volume.
+  Around 250k splats in XR at 72Hz stereo is the realistic ceiling on
+  the XR2; desktop gets the full set. The splat renders as a real
+  object (normal blending, depth on) while holograms stay additive.
+- **Content without a local GPU**: rendering is cheap, TRAINING is
+  what the laptop cannot do, and phones solve it: Scaniverse trains
+  splats on-device for free and exports PLY; Luma and Polycam process
+  in the cloud. Generative single-image splats (LGM and friends via
+  ComfyUI-3D-Pack) want more VRAM than a GTX 1080; RunPod when that
+  matters.
+- **The demo**: scan your own room with a phone, drop the PLY into the
+  space, materialize it on the gallery rim, and step inside it in VR.
+  A captured place hanging inside the workflow universe.
+
 ### Widget coverage research
 
 Inventory `/object_info` widget and input types across popular node
