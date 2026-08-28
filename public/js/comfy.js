@@ -4,6 +4,33 @@
 // prompt_id.
 import { BUILTIN_SCHEMA, schemaFromObjectInfo, topoLayers } from './graph.js';
 
+// Two deployments, one frontend:
+// - standalone: server.py serves us at / and proxies /api + /ws to ComfyUI
+// - hosted: the ComfyUI-ComfyVR custom node serves us at /comfyvr/ on
+//   ComfyUI's own server — same origin, no proxy, /api and /ws are real
+export const HOSTED = location.pathname.startsWith('/comfyvr');
+export const API = '/api';
+export const LOCAL = HOSTED ? '/comfyvr/local' : '/local';
+
+// 3D outputs (meshes, splats) hide in output dicts under pack-specific
+// keys; detect them by extension anywhere in the arrays.
+export const MESH_EXT = /\.(glb|gltf|obj|ply|splat)$/i;
+export function scanOutputsForAssets(output) {
+  const found = [];
+  for (const val of Object.values(output || {})) {
+    if (!Array.isArray(val)) continue;
+    for (const item of val) {
+      const f = typeof item === 'string' ? item : item?.filename;
+      if (typeof f === 'string' && MESH_EXT.test(f)) {
+        found.push(typeof item === 'string'
+          ? { filename: f, subfolder: '', type: 'output' }
+          : { filename: item.filename, subfolder: item.subfolder || '', type: item.type || 'output' });
+      }
+    }
+  }
+  return found;
+}
+
 export class ComfyClient {
   constructor() {
     this.mode = 'demo';
@@ -16,11 +43,14 @@ export class ComfyClient {
 
   async detect() {
     try {
-      const h = await (await fetch('health')).json();
-      this.backend = h.backend;
-      if (h.live) {
-        this.mode = 'live';
-        this.openSocket();
+      if (HOSTED) {
+        // served by ComfyUI itself: alive by definition, but confirm cheaply
+        const r = await fetch(API + '/prompt');
+        if (r.ok) { this.backend = location.origin; this.mode = 'live'; this.openSocket(); }
+      } else {
+        const h = await (await fetch('/health')).json();
+        this.backend = h.backend;
+        if (h.live) { this.mode = 'live'; this.openSocket(); }
       }
     } catch (e) {
       this.mode = 'demo';
@@ -34,7 +64,7 @@ export class ComfyClient {
     let live = {};
     if (this.mode === 'live') {
       try {
-        if (!this.objectInfo) this.objectInfo = await (await fetch('api/object_info')).json();
+        if (!this.objectInfo) this.objectInfo = await (await fetch(API + '/object_info')).json();
         live = schemaFromObjectInfo(this.objectInfo, types);
       } catch (e) {
         console.warn('object_info failed, using builtins', e);
@@ -44,14 +74,14 @@ export class ComfyClient {
   }
 
   async listLocalWorkflows() {
-    return await (await fetch('local/workflows')).json();
+    return await (await fetch(LOCAL + '/workflows')).json();
   }
 
   // Workflows the user saved in the ComfyUI frontend (server-side userdata).
   async listUserdataWorkflows() {
     if (this.mode !== 'live') return [];
     try {
-      const r = await fetch('api/userdata?dir=workflows&recurse=true&split=false');
+      const r = await fetch(API + '/userdata?dir=workflows&recurse=true&split=false');
       if (!r.ok) return [];
       const files = await r.json();
       return files
@@ -61,17 +91,17 @@ export class ComfyClient {
   }
 
   async loadUserdataWorkflow(path) {
-    const r = await fetch('api/userdata/' + encodeURIComponent(path));
+    const r = await fetch(API + '/userdata/' + encodeURIComponent(path));
     if (!r.ok) throw new Error('userdata ' + r.status);
     return await r.json();
   }
 
   async loadLocalWorkflow(name) {
-    return await (await fetch('local/workflows/' + encodeURIComponent(name))).json();
+    return await (await fetch(LOCAL + '/workflows/' + encodeURIComponent(name))).json();
   }
 
   async saveLocalWorkflow(name, json) {
-    const r = await fetch('local/workflows/' + encodeURIComponent(name), {
+    const r = await fetch(LOCAL + '/workflows/' + encodeURIComponent(name), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(json),
     });
     return r.ok;
@@ -80,13 +110,13 @@ export class ComfyClient {
   async history(maxItems = 64) {
     if (this.mode !== 'live') return {};
     try {
-      const r = await fetch('api/history?max_items=' + maxItems);
+      const r = await fetch(API + '/history?max_items=' + maxItems);
       return r.ok ? await r.json() : {};
     } catch (e) { return {}; }
   }
 
   async imageBitmap(im) {
-    const url = `api/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
+    const url = `${API}/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type}`;
     return await createImageBitmap(await (await fetch(url)).blob());
   }
 
@@ -136,7 +166,7 @@ export class ComfyClient {
           try { bitmaps.push(await this.imageBitmap(im)); }
           catch (e) { console.warn('view fetch failed', e); }
         }
-        hub.onExecuted(d.node, bitmaps);
+        hub.onExecuted(d.node, bitmaps, scanOutputsForAssets(d.output));
         break;
       }
       case 'execution_success':
@@ -157,7 +187,7 @@ export class ComfyClient {
       client_id: this.clientId,
       extra_data: { extra_pnginfo: { workflow: hub.rawWorkflow() } },
     };
-    const r = await fetch('api/prompt', {
+    const r = await fetch(API + '/prompt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const j = await r.json();

@@ -158,11 +158,18 @@ export function schemaFromObjectInfo(objectInfo, types) {
 export function parseWorkflow(json, schema) {
   const nodes = new Map();
   const links = new Map();
+  // Subgraphs / group nodes: legacy "workflow/Name" types, or (new-style)
+  // node types that reference json.definitions.subgraphs entries. We render
+  // them honestly but cannot queue them (the stock frontend flattens them
+  // before submitting; we don't — yet).
+  const subgraphIds = new Set(((json.definitions || {}).subgraphs || []).map(s => String(s.id)));
+  const isSubgraph = (t) => typeof t === 'string' && (t.startsWith('workflow/') || t.startsWith('workflow>') || subgraphIds.has(t));
   for (const L of json.links || []) {
     links.set(L[0], { id: L[0], src: L[1], srcSlot: L[2], dst: L[3], dstSlot: L[4], type: L[5] });
   }
   for (const n of json.nodes || []) {
-    const sc = schema[n.type];
+    const sub = isSubgraph(n.type);
+    const sc = sub ? null : schema[n.type];
     const stored = Array.isArray(n.widgets_values) ? n.widgets_values.slice() : [];
     const widgets = [];
     const linkInputs = [];
@@ -201,9 +208,10 @@ export function parseWorkflow(json, schema) {
     const outputs = (n.outputs || []).map(o => ({ name: o.name, type: o.type, links: (o.links || []).filter(id => links.has(id)) }));
     nodes.set(n.id, {
       id: n.id, type: n.type,
-      title: n.title || (sc ? sc.display : n.type),
+      title: n.title || (sc ? sc.display : (sub ? '⌬ subgraph' : n.type)),
       schema: sc || null, widgets, linkInputs, outputs,
       hasImage: !!(sc && sc.hasImage),
+      subgraph: sub,
     });
   }
   // Drop links whose endpoints are missing (defensive against hand edits).
@@ -405,6 +413,7 @@ export function toApiFormat(graph) {
   const api = {};
   for (const node of graph.nodes.values()) {
     if (FRONTEND_ONLY.has(node.type)) continue;
+    if (node.subgraph) throw new Error(`"${node.title}" is a subgraph — comfyvr can't queue those yet (flatten it in ComfyUI first)`);
     if (!node.schema) throw new Error(`no schema for node type ${node.type} — is that custom node installed?`);
     const inputs = {};
     for (const wg of node.widgets) {

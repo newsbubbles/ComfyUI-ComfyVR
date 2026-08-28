@@ -302,6 +302,10 @@ export class Hub {
       }
       gImg.mesh.material.opacity = 0.9 * ft * (0.92 + 0.08 * Math.sin(t * 2 + gImg.phase));
       gImg.mesh.visible = ft > 0.01;
+      if (gImg.assetState?.object) {
+        gImg.assetState.object.rotation.y += dt * 0.35;
+        gImg.assetState.object.visible = ft > 0.01;
+      }
     }
   }
 
@@ -335,7 +339,7 @@ export class Hub {
     this.corePanel?.dirty();
   }
 
-  onExecuted(nodeId, imgBitmaps) {
+  onExecuted(nodeId, imgBitmaps, assets = []) {
     const id = Number(nodeId);
     const p = this.panels.get(id);
     if (p) {
@@ -350,6 +354,10 @@ export class Hub {
       for (const bm of imgBitmaps) this.addGeneration(bm);
       this.opts.audio?.chime();
     }
+    if (assets?.length) {
+      for (const a of assets) this.addAsset(a);
+      this.opts.audio?.accrete();
+    }
   }
 
   onPreview(bitmap) {
@@ -361,8 +369,14 @@ export class Hub {
   // you face from the stand point), newest nearest the center. A fresh one
   // is BORN beside the core — where you were watching the preview — holds a
   // few seconds, then flies up to its slot.
-  addGeneration(bitmap, caption = '', { instant = false } = {}) {
-    const tex = new THREE.CanvasTexture(frameImage(bitmap, caption));
+  gallerySlot(i) {
+    const slotAngle = this.meanAngle + Math.ceil(i / 2) * 0.42 * (i % 2 ? 1 : -1);
+    const r = this.rimRadius + 1.5;
+    return new THREE.Vector3(Math.cos(slotAngle) * r, this.rimY + 2 + (i % 3) * 1.3, Math.sin(slotAngle) * r);
+  }
+
+  pushGalleryMesh(canvas, { instant = false, asset = null } = {}) {
+    const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
       map: tex, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending,
@@ -372,14 +386,23 @@ export class Hub {
     mesh.renderOrder = 9;
     mesh.userData.hub = this;
     mesh.userData.gallery = true;
-    const i = this.gallery.length;
-    const slotAngle = this.meanAngle + Math.ceil(i / 2) * 0.42 * (i % 2 ? 1 : -1);
-    const r = this.rimRadius + 1.5;
-    const to = new THREE.Vector3(Math.cos(slotAngle) * r, this.rimY + 2 + (i % 3) * 1.3, Math.sin(slotAngle) * r);
+    const to = this.gallerySlot(this.gallery.length);
     const from = new THREE.Vector3(-Math.cos(this.meanAngle) * 2.6, 4.0, -Math.sin(this.meanAngle) * 2.6);
     mesh.position.copy(instant ? to : from);
     this.group.add(mesh);
-    this.gallery.push({ mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to });
+    const item = { mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to, asset };
+    this.gallery.push(item);
+    return item;
+  }
+
+  addGeneration(bitmap, caption = '', opts = {}) {
+    return this.pushGalleryMesh(frameImage(bitmap, caption), opts);
+  }
+
+  // A 3D output gets a placard; clicking it materializes the real asset.
+  addAsset(asset, opts = {}) {
+    if (this.gallery.some(g => g.asset && g.asset.filename === asset.filename && g.asset.subfolder === asset.subfolder)) return null;
+    return this.pushGalleryMesh(assetPlacard(asset), { ...opts, asset });
   }
 
   // ---------- edits ----------
@@ -413,6 +436,40 @@ function glowTexture() {
   g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
   _glowTex = new THREE.CanvasTexture(c);
   return _glowTex;
+}
+
+// Placard for a 3D output: wireframe-diamond glyph + format + filename.
+function assetPlacard(asset) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 400;
+  const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(159,232,220,0.8)';
+  g.lineWidth = 3;
+  g.strokeRect(4, 4, 392, 392);
+  g.save();
+  g.translate(200, 170);
+  g.strokeStyle = 'rgba(159,232,220,0.9)';
+  g.lineWidth = 2.5;
+  // isometric-ish cube
+  const p = [[-70, -20], [0, -60], [70, -20], [70, 55], [0, 95], [-70, 55], [0, 15]];
+  const edges = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [0, 6], [2, 6], [6, 4]];
+  for (const [a, b] of edges) {
+    g.beginPath(); g.moveTo(p[a][0], p[a][1]); g.lineTo(p[b][0], p[b][1]); g.stroke();
+  }
+  g.restore();
+  const ext = (asset.filename.split('.').pop() || '').toUpperCase();
+  g.fillStyle = 'rgba(191,255,244,0.95)';
+  g.font = 'bold 44px Consolas, monospace';
+  g.textAlign = 'center';
+  g.fillText(ext, 200, 320);
+  g.font = '16px Consolas, monospace';
+  g.fillStyle = 'rgba(159,232,220,0.7)';
+  const name = asset.filename.length > 34 ? asset.filename.slice(0, 33) + '…' : asset.filename;
+  g.fillText(name, 200, 356);
+  g.font = '14px Consolas, monospace';
+  g.fillStyle = 'rgba(159,232,220,0.5)';
+  g.fillText('◈ materialize', 200, 384);
+  return c;
 }
 
 function frameImage(bitmap, caption) {

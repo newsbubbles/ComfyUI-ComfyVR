@@ -6,7 +6,8 @@ import { parseWorkflow, typesAccepting, colorForType } from './graph.js';
 import { Panel, pumpRedraws, PW, buttonRow } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
-import { ComfyClient, demoImage } from './comfy.js';
+import { ComfyClient, demoImage, scanOutputsForAssets } from './comfy.js';
+import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,12 @@ const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 30
 const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
+// lights exist solely for materialized 3D assets — every hologram is
+// MeshBasic/additive and ignores them
+scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(2, 5, 3);
+scene.add(sun);
 const camWorld = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 addEventListener('resize', () => {
@@ -467,7 +474,13 @@ function onClick(e) {
   if (palette && (!hit || hit.panel !== palette.panel)) closePalette();
   if (!hit) return;
   const { panel, hub, gallery, rowInfo } = hit;
-  if (gallery) {  // dock to a generation
+  if (gallery) {
+    const item = hub.gallery.find(g => g.mesh === hit.object);
+    if (item?.asset) {  // placard <-> real 3D object
+      toggleAsset(hub, item, audio).catch(e => flashHint('asset load failed: ' + (e.message || e)));
+      return;
+    }
+    // dock to a generation
     const center = hit.object.position.clone().applyMatrix4(hub.group.matrixWorld);
     const n = cam.pos.clone().sub(center).normalize();
     cam.level = 'panel'; cam.hub = hub;
@@ -584,7 +597,17 @@ function hubOpts() {
   return {
     audio,
     schema: SCHEMA,
-    onQueue: (h) => { audio.queueSweep(); client.queue(h); flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : '')); },
+    onQueue: async (h) => {
+      audio.queueSweep();
+      try {
+        await client.queue(h);
+        flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
+      } catch (e) {
+        h.onStatus('error');
+        flashHint(String(e.message || e));
+        audio.toggle(false);
+      }
+    },
     onSave: async (h) => {
       // userdata/dropped hubs save a LOCAL copy — never overwrite the
       // user's real ComfyUI workflows until this serializer has more miles
@@ -695,6 +718,10 @@ async function backfillHistory() {
           hub.addGeneration(await client.imageBitmap(im), '', { instant: true });
           recalled++;
         } catch (err) { /* image may have been deleted from disk */ }
+      }
+      for (const a of scanOutputsForAssets(out)) {
+        if (hub.gallery.length >= 10) break;
+        if (hub.addAsset(a, { instant: true })) recalled++;
       }
     }
   }
@@ -892,7 +919,11 @@ function xrSelectStart(st) {
       return;
     }
   }
-  if (hit.gallery) return;
+  if (hit.gallery) {
+    const item = hit.hub?.gallery.find(g => g.mesh === hit.object);
+    if (item?.asset) toggleAsset(hit.hub, item, audio).catch(() => {});
+    return;
+  }
   if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
   if (hit.panel && hit.hub) dockToPanel(hit.panel, hit.hub);
 }
