@@ -106,6 +106,17 @@ expect single-step control; open a long markdown note and read all of
 it; fresh-clone first run without the sample checkpoints and expect a
 marked substitution instead of a validation error.
 
+Status 2026-08-28: spike 1 SHIPPED (commit 980e09e) and verified live,
+including a real double-queue with distinct seeds. The error handling
+overhaul below also SHIPPED early (commit 8c12382) because the neurodes
+queue failures forced it: rejections and execution errors now land on
+the offending panels in red, the core panel carries the message, and
+the HUD shows queue depth. Root causes fixed the same day: V3 "COMBO"
+specs, AUTOGROW dynamic input groups, and by-name widget matching for
+workflows saved against older node definitions. Every neurodes
+workflow now validates. The vision track (voice + agent harness) lives
+in `JARVIS.md`.
+
 ## Spike 2 (queued behind spike 1)
 
 Creature comforts and robustness: a workflow browser panel to open and
