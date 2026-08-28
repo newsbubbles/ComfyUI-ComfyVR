@@ -8,7 +8,8 @@ of holographic panels per layer of the graph, wires as arcs of light.
 Queue a generation and real pulses climb the real wires while the image
 forms at the center. Finished outputs hang in a gallery orbiting the
 workflow that made them. If the output is a 3D model, you can pull the
-actual mesh out of its thumbnail and walk around it.
+actual mesh out of its thumbnail and walk around it. If it is a
+gaussian splat, it becomes a place you can walk into.
 
 Works flat on your monitor. Works in VR with controllers. Works in VR
 with bare hands. Tested on a real Quest 2, over wifi, no cable and no
@@ -91,8 +92,8 @@ backend at all so you can explore the space cold.
   a room you can walk into. Scan a space with a phone app that exports
   splats, drop the file in your ComfyUI output folder as
   `cvr_demo_<name>.splat`, and it appears in the space.
-- **Provenance**: drop any ComfyUI PNG into the space and the workflow
-  embedded in it unfolds as a new hub, with the image on its rim.
+- **Drop a PNG**: any ComfyUI image dropped into the space unfolds the
+  workflow embedded in it as a new hub, with the image on its rim.
 - **History recall**: recent generations find their workflows on load
   and hang in the right gallery.
 
@@ -130,7 +131,10 @@ requires a secure context, and there are three ways to get one:
 | Click | left click | trigger | pinch |
 | Move a node | drag its title bar | hold trigger on title bar | pinch and hold title bar |
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
-| Back out | Esc | | |
+| Add a node | drop a wire into space | same, by ray | same, by pinch |
+| Delete a node | ✕ on its header, twice | same, by ray | same, by pinch |
+| Browse workflows | library at the center | same | same |
+| Back out | Esc | wrist watch | wrist watch |
 
 To leave VR with bare hands, look at your left wrist: a small watch
 panel carries BACK OUT (return to the constellation) and EXIT VR,
@@ -191,10 +195,9 @@ The goal: the most natural place to run, tend, and remix generative
 workflows, on a screen or standing inside them. In rough order:
 
 - Creating workflows: start an empty one from a template, grow it node
-  by node, save it. Node delete comes with this.
-- Node search that works in VR: fuzzy matching like the stock
-  frontend, plus category browsing you can pinch through without a
-  keyboard, and eventually semantic search over node descriptions.
+  by node, save it.
+- Semantic node search over node descriptions (fuzzy matching and
+  pinchable category browsing are already in).
 - Image upload from inside the headset. The browser file picker on
   Quest reaches headset storage, including your screenshots and
   downloads, so feeding a LoadImage node from the headset gallery is a
