@@ -41,13 +41,25 @@ stock ComfyUI over its API — your workflow files stay vanilla-compatible.
 
 ## Run it
 
-Requires Python 3.10+ with `aiohttp`, and (optionally) a ComfyUI instance.
+**As a ComfyUI custom node (recommended).** Clone this repo into
+`custom_nodes/` and restart ComfyUI:
+
+```
+cd ComfyUI/custom_nodes
+git clone <this repo> ComfyUI-ComfyVR
+```
+
+ComfyUI grows a route: open `http://127.0.0.1:8188/comfyvr/`. No separate
+server, no proxy, no configuration — it registers zero nodes, just the
+frontend.
+
+**Standalone.** Python 3.10+ with `aiohttp`:
 
 ```
 python server.py [--port 8189] [--backend http://127.0.0.1:8188]
 ```
 
-Open http://localhost:8189. The server serves the frontend and proxies
+Open http://localhost:8189. This server serves the frontend and proxies
 `/api/*` + `/ws` to ComfyUI, so there is no CORS story. If the backend is
 down you get demo mode.
 
