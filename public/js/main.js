@@ -2,7 +2,7 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow, typesAccepting, colorForType } from './graph.js';
+import { parseWorkflow, typesAccepting, colorForType, schemaFromObjectInfo } from './graph.js';
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
@@ -272,6 +272,7 @@ canvas.addEventListener('wheel', (e) => {
   if (dragMode === null) {
     const hit = pick(e);
     const ri = hit?.rowInfo;
+    if (palette && hit?.panel === palette.panel) { palettePage(e.deltaY > 0 ? 1 : -1); return; }
     if (ri?.kind === 'slider' && ri.row?.widget) {
       const row = ri.row, wg = row.widget;
       const dir = e.deltaY < 0 ? 1 : -1;
@@ -301,10 +302,12 @@ addEventListener('keydown', (e) => {
   }
   if (palette) {
     // the palette owns the keyboard: type to filter, Enter takes the top hit
-    if (e.key === 'Backspace') { palette.query = palette.query.slice(0, -1); buildPalette(); return; }
+    if (e.key === 'Backspace') { palette.query = palette.query.slice(0, -1); palette.page = 0; buildPalette(); return; }
     if (e.key === 'Enter') { if (palette.first) addFromPalette(palette.first); return; }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       palette.query += e.key;
+      palette.mode = 'list';   // search is global, leave the category view
+      palette.page = 0;
       buildPalette();
       audio.tick();
       return;
@@ -442,19 +445,22 @@ function fuzzyScore(q, type) {
   return best;
 }
 
-function paletteCandidates() {
-  const all = typesAccepting(SCHEMA, palette.drag.type);
+function catOf(t) { return ((SCHEMA[t].category || 'other').split('/')[0] || 'other').toLowerCase(); }
+
+function paletteMatches(useCat) {
+  let all = typesAccepting(SCHEMA, palette.drag.type);
+  if (useCat && palette.cat) all = all.filter(t => catOf(t) === palette.cat);
   const q = palette.query.trim().toLowerCase();
   if (q) {
     return all.map(t => [t, fuzzyScore(q, t)]).filter(([, s]) => s > 0)
-      .sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 9);
+      .sort((a, b) => b[1] - a[1]).map(([t]) => t);
   }
   const inHub = new Set([...palette.hub.graph.nodes.values()].map(n => n.type));
   return all.slice().sort((a, b) => {
     const ai = inHub.has(a) ? 0 : 1, bi = inHub.has(b) ? 0 : 1;
     if (ai !== bi) return ai - bi;
     return (SCHEMA[a].display || a).localeCompare(SCHEMA[b].display || b);
-  }).slice(0, 9);
+  });
 }
 
 function addFromPalette(t) {
@@ -465,15 +471,46 @@ function addFromPalette(t) {
   closePalette();
 }
 
+function palettePage(dir) {
+  if (!palette) return;
+  palette.page += dir;
+  buildPalette();
+  audio.tick();
+}
+
+// Two views, both pinch-native for VR: a paged list of matching types, and
+// a category drill-down built from each node's real category path. Typing
+// still fuzzy-filters on desktop.
 function buildPalette() {
   palette.panel?.dispose();
-  const cands = paletteCandidates();
-  palette.first = cands[0] || null;
+  const PAGE = 7;
+  let items;
+  if (palette.mode === 'cats') {
+    const counts = new Map();
+    for (const t of paletteMatches(false)) counts.set(catOf(t), (counts.get(catOf(t)) || 0) + 1);
+    items = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => ({
+      label: `${c.toUpperCase()} · ${n}`,
+      act: () => { palette.cat = c; palette.mode = 'list'; palette.page = 0; buildPalette(); audio.tick(); },
+    }));
+    palette.first = null;
+  } else {
+    const types = paletteMatches(true);
+    palette.first = types[0] || null;
+    items = types.map(t => ({ label: (SCHEMA[t].display || t).toUpperCase(), act: () => addFromPalette(t) }));
+  }
+  const pages = Math.max(1, Math.ceil(items.length / PAGE));
+  palette.page = Math.min(Math.max(0, palette.page), pages - 1);
+  const slice = items.slice(palette.page * PAGE, palette.page * PAGE + PAGE);
+  const inCat = palette.mode === 'list' && palette.cat;
   const rows = [
-    readoutRow(() => (palette.query ? '⌕ ' + palette.query : '⌕ type to filter'), () => ''),
-    ...(cands.length
-      ? cands.map(t => buttonRow((SCHEMA[t].display || t).toUpperCase(), () => addFromPalette(t)))
-      : [readoutRow(() => 'no matching node types', () => '')]),
+    readoutRow(() => (palette.query ? '⌕ ' + palette.query : '⌕ type to filter'),
+               () => (inCat ? '⌸ ' + palette.cat : '')),
+    palette.mode === 'cats' || inCat
+      ? buttonRow('◂ BACK', () => { palette.mode = 'list'; palette.cat = null; palette.page = 0; buildPalette(); audio.tick(); })
+      : buttonRow('⌸ BROWSE CATEGORIES', () => { palette.mode = 'cats'; palette.page = 0; buildPalette(); audio.tick(); }),
+    ...(slice.length ? slice.map(it => buttonRow(it.label, it.act))
+                     : [readoutRow(() => 'no matching node types', () => '')]),
+    ...(pages > 1 ? [buttonRow(`◂  ${palette.page + 1} / ${pages}  ▸`, (frac) => palettePage(frac < 0.5 ? -1 : 1))] : []),
   ];
   const panel = new Panel({ title: 'add node', subtitle: palette.drag.type, accent: colorForType(palette.drag.type), rows, worldWidth: 3.0, billboard: true });
   panel.placeFlat(scene, palette.pos);
@@ -482,10 +519,18 @@ function buildPalette() {
   palette.panel = panel;
 }
 
+let paletteExpanded = false;
 function openPalette(drag) {
   closePalette();
+  // SCHEMA is lazily filled with only the types loaded workflows use; the
+  // palette should offer the whole install. object_info is already cached,
+  // so expand once, on first open.
+  if (!paletteExpanded && client.mode === 'live' && client.objectInfo) {
+    Object.assign(SCHEMA, schemaFromObjectInfo(client.objectInfo, Object.keys(client.objectInfo)));
+    paletteExpanded = true;
+  }
   if (!typesAccepting(SCHEMA, drag.type).length) return;
-  palette = { panel: null, pos: drag.drop.clone(), hub: drag.hub, drag, query: '', first: null };
+  palette = { panel: null, pos: drag.drop.clone(), hub: drag.hub, drag, query: '', first: null, mode: 'list', cat: null, page: 0 };
   buildPalette();
   audio.accrete();
 }
@@ -1262,6 +1307,7 @@ function tick(dt) {
 // pane), and snapshots the GL canvas without preserveDrawingBuffer.
 window.CVR = {
   hubs, cam, beams, client, camera, THREE,
+  openPalette, pal: () => palette,
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },

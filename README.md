@@ -54,9 +54,10 @@ backend at all so you can explore the space cold.
   out to IMAGE blue at the rim.
 - **Real editing**: sliders, combos, seed reroll, prompt text. Drag a
   panel's title bar to move it. Grab a port dot to rewire or unplug a
-  link. Drop a wire into empty space and an add-node palette grows a
-  new node there, already connected; type to fuzzy-filter it. The ✕ in
-  a node's header deletes it, with a confirm tap.
+  link. Drop a wire into empty space and an add-node palette offers
+  every compatible type in your install: type to fuzzy-filter on
+  desktop, or browse by category and page through with pinches in VR.
+  The ✕ in a node's header deletes it, with a confirm tap.
 - **Sane controls**: sliders travel useful ranges (steps sweeps 1 to
   150, not 1 to 10000), mouse wheel fine-nudges one step at a time,
   seeds with randomize actually randomize between queues, and stored
