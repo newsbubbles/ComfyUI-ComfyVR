@@ -76,6 +76,20 @@ requires a secure context, so:
 - **Quest**: connect USB, run `adb reverse tcp:8188 tcp:8188`, then open
   `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
   `quest.ps1` does the waiting, the tunnel, and prints these steps.
+- **Any standalone headset over wifi** (no cable, no developer mode):
+  run the standalone server with https and accept the certificate
+  warning once in the headset browser.
+
+  ```
+  python make_cert.py
+  python server.py --tls --port 8443
+  ```
+
+  Then open `https://<your-pc-ip>:8443` in the headset (the server
+  prints the exact address). The warning screen is expected for a
+  self-signed cert: hit Advanced and proceed. A warned https page still
+  counts as a secure context, which is all WebXR asks for. If the page
+  never loads at all, allow inbound TCP 8443 through your PC firewall.
 
 ### Controls
 

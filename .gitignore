@@ -1,3 +1,4 @@
 __pycache__/
 *.pyc
 workflows/_snap.json
+certs/

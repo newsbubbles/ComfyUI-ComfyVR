@@ -5,6 +5,13 @@ exists. Run ComfyUI normally (default http://127.0.0.1:8188); point this at
 it with COMFYVR_BACKEND if it lives elsewhere.
 
   python server.py [--port 8189] [--backend http://127.0.0.1:8188]
+
+For headsets on the same network (no cable, no developer mode): WebXR needs
+a secure context, so serve https and let the headset browser accept the
+self-signed cert once.
+
+  python make_cert.py
+  python server.py --tls --port 8443
 """
 import argparse
 import asyncio
@@ -165,9 +172,34 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=int(os.environ.get("COMFYVR_PORT", 8189)))
     ap.add_argument("--backend", default=os.environ.get("COMFYVR_BACKEND", "http://127.0.0.1:8188"))
+    ap.add_argument("--host", default=os.environ.get("COMFYVR_HOST"))
+    ap.add_argument("--tls", action="store_true",
+                    help="serve https using certs/cert.pem + certs/key.pem and listen on the LAN")
     args = ap.parse_args()
-    print(f"comfyvr on http://127.0.0.1:{args.port}  (backend: {args.backend})")
-    web.run_app(app_factory(args.backend), host="127.0.0.1", port=args.port, print=None)
+
+    ssl_ctx = None
+    if args.tls:
+        import ssl
+        cert, key = ROOT / "certs" / "cert.pem", ROOT / "certs" / "key.pem"
+        if not (cert.is_file() and key.is_file()):
+            raise SystemExit("no certs found: run `python make_cert.py` first")
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_ctx.load_cert_chain(cert, key)
+
+    host = args.host or ("0.0.0.0" if args.tls else "127.0.0.1")
+    scheme = "https" if ssl_ctx else "http"
+    shown = host
+    if host == "0.0.0.0":
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))  # no traffic sent, just picks the outbound interface
+            shown = s.getsockname()[0]
+            s.close()
+        except OSError:
+            shown = "localhost"
+    print(f"comfyvr on {scheme}://{shown}:{args.port}  (backend: {args.backend})")
+    web.run_app(app_factory(args.backend), host=host, port=args.port, print=None, ssl_context=ssl_ctx)
 
 
 if __name__ == "__main__":
