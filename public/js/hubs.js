@@ -3,7 +3,7 @@
 // per topological depth, panels curved onto the ring cylinder facing the
 // core, beams arcing tier to tier, gallery of generations on the rim.
 import * as THREE from 'three';
-import { topoLayers, colorForType, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph } from './graph.js';
+import { topoLayers, colorForType, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph, removeNodeFromGraph } from './graph.js';
 import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow, alertRow } from './panels.js';
 
 const R0 = 7;          // ring 0 radius
@@ -103,7 +103,7 @@ export class Hub {
     if (node.type.includes('KSampler')) rows.push(progressRow(() => (this.runningNode === id ? this.progress : 0)));
     const hasInputImage = node.widgets.some(w => w.imageInput);
     if (node.hasImage || hasInputImage) rows.push(imageRow(hasInputImage ? 'no image selected' : 'awaiting generation'));
-    const p = new Panel({ title: node.title, subtitle: `#${id} d${d}`, accent, rows });
+    const p = new Panel({ title: node.title, subtitle: `#${id} d${d}`, accent, rows, deletable: true });
     const y = ov?.y ?? d * DY + p.worldHeight() / 2;
     p.place(this.group, r, theta, y, -0.1 - ringD * 0.015);
     p.foldAlpha = 0;
@@ -190,6 +190,20 @@ export class Hub {
     removeLink(this.graph, linkId);
     this.beams.removeBeam(this.beamKey(linkId));
     this.opts.audio?.toggle(false);
+  }
+
+  // ---------- node removal ----------
+  deleteNode(id) {
+    const p = this.panels.get(id);
+    if (!removeNodeFromGraph(this.graph, id)) return false;
+    this.pruneBeams();
+    if (p) p.dispose();
+    this.panels.delete(id);
+    delete this.overrides[id];
+    this.sigil.dirty();
+    this.corePanel?.dirty();
+    this.opts.audio?.toggle(false);
+    return true;
   }
 
   // ---------- node adding (palette drop) ----------

@@ -117,9 +117,16 @@ workflows saved against older node definitions. Every neurodes
 workflow now validates. The vision track (voice + agent harness) lives
 in `JARVIS.md`.
 
-## Spike 2 (queued behind spike 1)
+## Spike 2 (in progress)
 
-Creature comforts and robustness: a workflow browser panel to open and
+Done 2026-08-28: node delete (✕ in every node panel header, tap to
+arm, second tap within 2.6s deletes and unwires; works by ray in VR
+and desktop alike; `removeNodeFromGraph` keeps live graph and raw JSON
+consistent, verified). The palette lost the "accrete" nomenclature: it
+is titled "add node", sorts types already used in the workflow first,
+and typing filters it with the same fuzzy keys the stock frontend
+searches (name, display_name, search_aliases; schema now carries
+aliases and category). Remaining, creature comforts and robustness: a workflow browser panel to open and
 close workflows (kills the 12-workflow cap); a layout sidecar store
 for userdata workflows (layouts currently persist only via local
 saves; userdata stays read-only, so store layouts in a local

@@ -83,9 +83,10 @@ let PANEL_SEQ = 1;
 
 export class Panel {
   // rows: [{kind, ...}] — see builders below. worldWidth in scene units.
-  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false }) {
+  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false, deletable = false }) {
     this.id = PANEL_SEQ++;
     this.title = title; this.subtitle = subtitle; this.accent = accent;
+    this.deletable = deletable;
     this.rows = rows;
     this.worldWidth = worldWidth;
     this.billboard = billboard;
@@ -182,7 +183,7 @@ export class Panel {
   rowAt(u, vTop) {
     const y = vTop * this.pxH;
     let acc = ROW_H.header;
-    if (y < acc) return { row: null, kind: 'header' };
+    if (y < acc) return { row: null, kind: 'header', frac: (u * PW - PAD) / (PW - 2 * PAD) };
     for (const r of this.rows) {
       const h = this.rowH(r);
       if (y < acc + h) return { row: r, kind: r.kind, frac: (u * PW - PAD) / (PW - 2 * PAD), yFrac: (y - acc) / h };
@@ -230,7 +231,18 @@ export class Panel {
     g.font = FONT(13);
     g.fillStyle = withAlpha(A, 0.6);
     g.textAlign = 'right';
-    g.fillText(this.subtitle, W - PAD, ROW_H.header / 2 - 2);
+    g.fillText(this.subtitle, W - PAD - (this.deletable ? 30 : 0), ROW_H.header / 2 - 2);
+    if (this.deletable) {
+      // node lifecycle lives on the header: dim ✕, bright on hover,
+      // red SURE? once armed (second tap deletes)
+      if (this.deleteArmed) {
+        g.fillStyle = withAlpha(ERR, 0.95); g.font = FONT(13, true);
+        g.fillText('✕ SURE?', W - PAD, ROW_H.header / 2 - 2);
+      } else {
+        g.fillStyle = withAlpha(A, this.hotHeader ? 0.95 : 0.35); g.font = FONT(15);
+        g.fillText('✕', W - PAD, ROW_H.header / 2 - 2);
+      }
+    }
     g.textAlign = 'left';
     let y = ROW_H.header;
     for (const r of this.rows) {
@@ -423,6 +435,8 @@ export class Panel {
   foldAlpha = 1;
   hint = null;
   errorMsg = null;
+  hotHeader = false;
+  deleteArmed = false;
 
   dispose() {
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }

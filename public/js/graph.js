@@ -168,6 +168,8 @@ export function schemaFromObjectInfo(objectInfo, types) {
       outputs: (info.output || []).map(o => (Array.isArray(o) ? 'COMBO' : o)),
       hasImage: !!(info.output_node && /image/i.test(t)) || t === 'LoadImage',
       liveOptions: true,  // combo options came from the running server, safe to snap against
+      aliases: info.search_aliases || [],   // same keys the stock search fuzzes over
+      category: info.category || '',
     };
   }
   return out;
@@ -447,6 +449,19 @@ export function addNodeToGraph(graph, type, sc) {
   });
   graph.raw.last_node_id = id;
   return node;
+}
+
+// Remove a node and every link touching it, from both the live graph and
+// the raw JSON.
+export function removeNodeFromGraph(graph, id) {
+  const node = graph.nodes.get(id);
+  if (!node) return false;
+  for (const [lid, L] of [...graph.links]) {
+    if (L.src === id || L.dst === id) removeLink(graph, lid);
+  }
+  graph.nodes.delete(id);
+  graph.raw.nodes = (graph.raw.nodes || []).filter(n => n.id !== id);
+  return true;
 }
 
 // Node types (from a schema map) that can receive an output of `type`.

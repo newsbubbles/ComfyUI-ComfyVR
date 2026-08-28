@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, typesAccepting, colorForType } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow, sliderValue } from './panels.js';
+import { Panel, pumpRedraws, PW, buttonRow, readoutRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets } from './comfy.js';
@@ -209,7 +209,7 @@ canvas.addEventListener('pointerdown', (e) => {
       dragMode = 'slider';
       applySlider(hit, e);
     } else if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null) {
-      pendingGrab = { kind: 'move', hit };
+      if (!inDeleteZone(hit)) pendingGrab = { kind: 'move', hit };
     } else if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null) {
       const s = portSlotAt(hit);
       if (s && s.dir === 'out') {
@@ -298,6 +298,17 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (palette) { closePalette(); return; }
     stepBack(); return;
+  }
+  if (palette) {
+    // the palette owns the keyboard: type to filter, Enter takes the top hit
+    if (e.key === 'Backspace') { palette.query = palette.query.slice(0, -1); buildPalette(); return; }
+    if (e.key === 'Enter') { if (palette.first) addFromPalette(palette.first); return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      palette.query += e.key;
+      buildPalette();
+      audio.tick();
+      return;
+    }
   }
   if (e.key === 'm' || e.key === 'M') { audio.setMuted(!audio.muted); flashHint(audio.muted ? 'muted' : 'sound on'); return; }
   keys.add(e.key.toLowerCase());
@@ -411,27 +422,76 @@ function finishLink(hit) {
   }
 }
 
-// ---------- accrete palette: drop a beam into space, pick what grows there ----------
-function openPalette(drag) {
+// ---------- add-node palette: drop a beam into space, pick what grows there ----------
+// Fuzzy filter matches what the stock frontend searches: type name, display
+// name, and search_aliases. No query = types already in this workflow first.
+function fuzzyScore(q, type) {
+  const sc = SCHEMA[type];
+  let best = 0;
+  for (const hay of [type, sc.display || '', ...(sc.aliases || [])]) {
+    const s = hay.toLowerCase();
+    if (!s) continue;
+    if (s.startsWith(q)) best = Math.max(best, 100 - s.length);
+    else if (s.includes(q)) best = Math.max(best, 60 - s.indexOf(q));
+    else {
+      let i = 0;
+      for (const ch of s) if (ch === q[i]) i++;
+      if (i === q.length) best = Math.max(best, 20);
+    }
+  }
+  return best;
+}
+
+function paletteCandidates() {
+  const all = typesAccepting(SCHEMA, palette.drag.type);
+  const q = palette.query.trim().toLowerCase();
+  if (q) {
+    return all.map(t => [t, fuzzyScore(q, t)]).filter(([, s]) => s > 0)
+      .sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 9);
+  }
+  const inHub = new Set([...palette.hub.graph.nodes.values()].map(n => n.type));
+  return all.slice().sort((a, b) => {
+    const ai = inHub.has(a) ? 0 : 1, bi = inHub.has(b) ? 0 : 1;
+    if (ai !== bi) return ai - bi;
+    return (SCHEMA[a].display || a).localeCompare(SCHEMA[b].display || b);
+  }).slice(0, 9);
+}
+
+function addFromPalette(t) {
+  const { drag } = palette;
+  const rel = palette.pos.clone().sub(drag.hub.center());
+  const place = { theta: Math.atan2(rel.z, rel.x), r: Math.hypot(rel.x, rel.z), y: rel.y };
+  drag.hub.addNodeAt(t, place, { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type });
   closePalette();
-  const candidates = typesAccepting(SCHEMA, drag.type).slice(0, 8);
-  if (!candidates.length) return;
-  const rows = candidates.map(t => buttonRow((SCHEMA[t].display || t).toUpperCase(), () => {
-    const rel = palette.pos.clone().sub(drag.hub.center());
-    const place = { theta: Math.atan2(rel.z, rel.x), r: Math.hypot(rel.x, rel.z), y: rel.y };
-    drag.hub.addNodeAt(t, place, { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type });
-    closePalette();
-  }));
-  const panel = new Panel({ title: 'accrete', subtitle: drag.type, accent: colorForType(drag.type), rows, worldWidth: 3.0, billboard: true });
-  panel.placeFlat(scene, drag.drop);
+}
+
+function buildPalette() {
+  palette.panel?.dispose();
+  const cands = paletteCandidates();
+  palette.first = cands[0] || null;
+  const rows = [
+    readoutRow(() => (palette.query ? '⌕ ' + palette.query : '⌕ type to filter'), () => ''),
+    ...(cands.length
+      ? cands.map(t => buttonRow((SCHEMA[t].display || t).toUpperCase(), () => addFromPalette(t)))
+      : [readoutRow(() => 'no matching node types', () => '')]),
+  ];
+  const panel = new Panel({ title: 'add node', subtitle: palette.drag.type, accent: colorForType(palette.drag.type), rows, worldWidth: 3.0, billboard: true });
+  panel.placeFlat(scene, palette.pos);
   panel.mesh.userData.palette = true;
   panel.dirty();
-  palette = { panel, pos: drag.drop.clone(), hub: drag.hub };
+  palette.panel = panel;
+}
+
+function openPalette(drag) {
+  closePalette();
+  if (!typesAccepting(SCHEMA, drag.type).length) return;
+  palette = { panel: null, pos: drag.drop.clone(), hub: drag.hub, drag, query: '', first: null };
+  buildPalette();
   audio.accrete();
 }
 function closePalette() {
   if (!palette) return;
-  palette.panel.dispose();
+  palette.panel?.dispose();
   palette = null;
 }
 
@@ -465,18 +525,41 @@ function pickRay() {
 
 function reachable(hit) { return hit.dist < 10 || !!hit.object.userData.palette; }
 
+// Right corner of a node header is the ✕: tap to arm, tap again to delete.
+function inDeleteZone(hit) {
+  return hit.rowInfo?.kind === 'header' && hit.panel?.deletable && (hit.rowInfo.frac ?? 0) > 0.78;
+}
+function armOrDelete(panel, hub) {
+  if (!panel.deleteArmed) {
+    panel.deleteArmed = true;
+    panel.dirty();
+    audio.tick();
+    clearTimeout(panel._delTimer);
+    panel._delTimer = setTimeout(() => { panel.deleteArmed = false; panel.dirty(); }, 2600);
+    return;
+  }
+  clearTimeout(panel._delTimer);
+  const id = panel.userData.nodeId;
+  const title = hub.graph.nodes.get(id)?.title || 'node';
+  if (hub.deleteNode(id)) flashHint('deleted ' + title);
+}
+
 let hotPanel = null;
 function hover(e) {
   const hit = pick(e);
   const interactive = hit && reachable(hit) && hit.rowInfo && isInteractive(hit.rowInfo);
   let cursor = hit ? (interactive ? 'pointer' : 'zoom-in') : 'grab';
   if (hit && reachable(hit) && hit.hub && hit.panel?.userData?.nodeId != null) {
-    if (hit.rowInfo?.kind === 'header') cursor = 'move';
+    if (hit.rowInfo?.kind === 'header') cursor = inDeleteZone(hit) ? 'pointer' : 'move';
     if (hit.rowInfo?.kind === 'port') cursor = 'crosshair';
   }
   canvas.style.cursor = cursor;
   const p = hit?.panel || null;
+  const hh = !!(p && reachable(hit) && hit.rowInfo?.kind === 'header' && p.deletable);
+  if (hotPanel && hotPanel !== p && hotPanel.hotHeader) { hotPanel.hotHeader = false; hotPanel.dirty(); }
+  if (p && p.hotHeader !== hh) { p.hotHeader = hh; p.dirty(); }
   if (hotPanel && hotPanel !== p) { hotPanel.setHot(null); hotPanel = null; }
+  if (hh) hotPanel = p;
   if (p && hit.rowInfo?.row && reachable(hit)) {
     if (p.hot !== hit.rowInfo.row) audio.tick();
     p.setHot(hit.rowInfo.row);
@@ -511,6 +594,7 @@ function onClick(e) {
   }
   if (!panel) return;
   if (hub && panel === hub.sigil) { flyToHub(hub); return; }
+  if (reachable(hit) && inDeleteZone(hit) && hub && panel.userData?.nodeId != null) { armOrDelete(panel, hub); return; }
   if (reachable(hit) && rowInfo && isInteractive(rowInfo)) { interact(panel, hub, rowInfo); return; }
   if (hub) dockToPanel(panel, hub);
 }
@@ -834,7 +918,7 @@ async function accreteHub(name, json, bitmap) {
   hubs.push(hub);
   if (bitmap) hub.addGeneration(bitmap, '', { instant: true });
   audio.accrete();
-  flashHint('accreted ' + nm);
+  flashHint('unfolded ' + nm);
   flyToHub(hub);
   return hub;
 }
@@ -924,6 +1008,7 @@ function xrSelectStart(st) {
   if (vrReach && ri) {
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
     if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) {
+      if (inDeleteZone(hit)) { armOrDelete(hit.panel, hit.hub); return; }
       setRayFromController(st.c);
       const p = hit.panel;
       const at = rayCylinder(hit.hub, p.placement.r);
