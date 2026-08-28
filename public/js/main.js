@@ -1208,6 +1208,7 @@ function attachWrist(grip) {
     const rows = [
       readoutRow(() => (client.mode === 'live' ? '● LIVE' : '◌ DEMO'),
                  () => (client.queueRemaining ? '◈ ' + client.queueRemaining + ' queued' : '')),
+      buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
     ];
     wrist = { panel: new Panel({ title: 'comfyvr', rows, worldWidth: 0.2 }) };

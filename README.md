@@ -122,9 +122,15 @@ requires a secure context, and there are three ways to get one:
 | Back out | Esc | | |
 
 To leave VR with bare hands, look at your left wrist: a small watch
-panel carries an EXIT VR button (and live queue status). The system
-gesture also always works: palm up facing you, then pinch and hold the
-floating logo.
+panel carries BACK OUT (return to the constellation) and EXIT VR,
+plus live queue status. The system gesture also always works: palm up
+facing you, then pinch and hold the floating logo.
+
+To record your session in HD, run `record.ps1` with the headset
+connected once: it switches the built-in capture from the default
+low-bitrate square video to 1920x1080 at 60fps and sets up wireless
+adb so later runs need no cable. Turn the microphone on in the Camera
+app to narrate. Recordings land in `/sdcard/Oculus/VideoShots`.
 
 Pinch works because Quest fires the same select events for hand tracking
 as for triggers, so every interaction is hand-native for free. Text
