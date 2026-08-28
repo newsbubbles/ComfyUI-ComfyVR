@@ -790,7 +790,13 @@ const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _v3 = new THREE.Vector
 
 if (navigator.xr?.isSessionSupported) {
   navigator.xr.isSessionSupported('immersive-vr').then((ok) => {
-    if (!ok) return;
+    if (!ok) {
+      // browser speaks WebXR but no headset runtime answered — say so
+      // somewhere findable instead of silently not showing the button
+      $('status').title = 'WebXR present, but no immersive-vr runtime (headset not detected)';
+      console.info('[comfyvr] WebXR present, immersive-vr unsupported — is the headset runtime (SteamVR/Oculus) running?');
+      return;
+    }
     const b = document.createElement('button');
     b.textContent = '◈ ENTER VR';
     b.style.cssText = 'position:absolute;bottom:14px;right:16px;pointer-events:auto;background:rgba(124,232,220,0.12);color:#7ce8dc;border:1px solid rgba(124,232,220,0.5);border-radius:4px;padding:8px 18px;cursor:pointer;letter-spacing:2px;font-family:Consolas,monospace;';
