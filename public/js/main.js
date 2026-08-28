@@ -853,7 +853,12 @@ function setRayFromController(c) {
 
 function xrSelectStart(st) {
   const hit = st.hit;
-  if (!hit) return;
+  if (!hit) {
+    // pinch the void and pull yourself through it — hands' locomotion
+    st.mode = 'pull';
+    st.pullLast = st.c.position.clone();
+    return;
+  }
   const vrReach = hit.dist < 14 || !!hit.object.userData.palette;
   const ri = hit.rowInfo;
   if (vrReach && ri) {
@@ -903,6 +908,14 @@ function xrSelectEnd(st) {
 function xrControllersTick() {
   for (const st of xrState.controllers) {
     setRayFromController(st.c);
+    if (st.mode === 'pull') {
+      // hand delta in rig space, rotated to world, amplified — space is big
+      _v3.copy(st.pullLast).sub(st.c.position).applyAxisAngle(UP, xrState.yaw);
+      cam.pos.addScaledVector(_v3, 4);
+      st.pullLast.copy(st.c.position);
+      st.dot.visible = false;
+      continue;
+    }
     if (st.mode === 'move' && moveDrag) { doMoveRay(); st.dot.visible = false; continue; }
     if (st.mode === 'link' && linkDrag) { doLinkDragRay(); st.hit = pickRay(); continue; }
     if (st.mode === 'slider' && st.hit) {

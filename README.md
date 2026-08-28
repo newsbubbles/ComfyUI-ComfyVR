@@ -63,6 +63,8 @@ WebXR needs a secure context:
   Chrome and click ENTER VR. localhost is exempt, nothing to set up.
 - **Quest**: `adb reverse tcp:8189 tcp:8189` over USB, then open
   http://localhost:8189 in the Quest browser. (Or tunnel https.)
+  On Windows, `quest.ps1` does the waiting, the tunnel, and prints the
+  in-headset steps.
 
 Text entry stays on the desktop for now — a phone-as-keyboard companion
 is planned, because typing prompts in VR is nobody's dream.
