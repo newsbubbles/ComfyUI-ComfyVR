@@ -1,89 +1,118 @@
-# comfyvr
+# ComfyVR
 
-A spatial frontend for ComfyUI. Your workflows become hubs in a dark
-constellation; fly into one and it unfolds into an amphitheater — one
-concentric ring per topological depth of the graph, holographic panels
-curved toward the core, links as arcs of light. When you queue, real
-pulses climb the real wires: ComfyUI's websocket drives panel glow, live
-progress, preview frames at the hub's heart, and finished images accrete
-onto a gallery rim above the graph that made them.
+Fly through your ComfyUI workflows.
 
-Not a video. Not a custom node (yet). A separate UI that talks to a
-stock ComfyUI over its API — your workflow files stay vanilla-compatible.
+Every workflow you have becomes a glowing hub floating in a dark
+constellation. Fly into one and it unfolds into an amphitheater: one ring
+of holographic panels per layer of the graph, wires as arcs of light.
+Queue a generation and real pulses climb the real wires while the image
+forms at the center. Finished outputs hang in a gallery orbiting the
+workflow that made them. If the output is a 3D model, you can pull the
+actual mesh out of its thumbnail and walk around it.
+
+Works flat on your monitor. Works in VR with controllers. Works in VR
+with bare hands.
+
+This is the project from [the "Comfy Workflow Universe" post on
+r/comfyui](https://www.reddit.com/r/comfyui/comments/1w0bt1p/comfy_workflow_universe/).
 
 ![constellation](docs/constellation.png)
 ![amphitheater](docs/amphitheater.png)
 ![gallery](docs/gallery.png)
 
-## What works
+## Install
 
-- **Two views**: constellation (workflows as sigils, threads between hubs
-  that share a checkpoint) and amphitheater (the DAG as concentric rings,
-  panel colors flowing with link types: MODEL purple at the core out to
-  IMAGE blue at the rim).
-- **Real editing**: widgets are live (sliders, combos, seed reroll, text),
-  drag a panel's title bar to move it (wheel pulls it between rings), grab
-  port dots to rewire or detach links, drop a beam into empty space and a
-  palette grows a new node there, wired.
-- **Real execution**: QUEUE converts to API format and submits; websocket
-  events drive pulses, progress, live previews, and gallery accretion.
-- **Provenance**: drop any ComfyUI PNG into the space and its embedded
-  workflow unfolds as a new hub with the image on its rim. Images
-  generated through comfyvr embed their workflow too.
-- **History recall**: on load, recent generations from `/history` find
-  their hubs and hang on the rims.
-- **Demo mode**: no backend running → simulated execution, procedural
-  imagery. The space works cold.
-- **WebXR**: an `◈ ENTER VR` button appears when a headset runtime is
-  reachable. Controller rays drive the same interactions as the mouse;
-  on Quest, hand-tracked pinch fires the same events, so bare hands work
-  wherever controllers do. Left stick flies, right stick snap-turns.
-
-## Run it
-
-**As a ComfyUI custom node (recommended).** Clone this repo into
-`custom_nodes/` and restart ComfyUI:
+Clone into `custom_nodes` and restart ComfyUI:
 
 ```
 cd ComfyUI/custom_nodes
-git clone <this repo> ComfyUI-ComfyVR
+git clone https://github.com/newsbubbles/ComfyUI-ComfyVR.git
 ```
 
-ComfyUI grows a route: open `http://127.0.0.1:8188/comfyvr/`. No separate
-server, no proxy, no configuration — it registers zero nodes, just the
-frontend.
-
-**Standalone.** Python 3.10+ with `aiohttp`:
+Then open:
 
 ```
-python server.py [--port 8189] [--backend http://127.0.0.1:8188]
+http://127.0.0.1:8188/comfyvr/
 ```
 
-Open http://localhost:8189. This server serves the frontend and proxies
-`/api/*` + `/ws` to ComfyUI, so there is no CORS story. If the backend is
-down you get demo mode.
+That's it. No separate server, no configuration, no CORS. It registers
+zero nodes, just the frontend route. Your workflow files are never
+modified: edits save local copies inside this folder, and everything
+stays loadable in vanilla ComfyUI.
 
-Workflows come from two places: the local `workflows/` folder, and (live)
-whatever you saved in the ComfyUI frontend (userdata). Edits SAVE to the
-local folder only — comfyvr never overwrites your ComfyUI-side files.
+There is also a standalone mode (`python server.py`, needs `aiohttp`)
+that proxies to any ComfyUI backend, and a demo mode that works with no
+backend at all so you can explore the space cold.
+
+## What it does
+
+- **Constellation view**: all your saved workflows as sigils in space,
+  with threads connecting workflows that share a checkpoint.
+- **Amphitheater view**: the workflow as concentric rings ordered by
+  graph depth. Panel colors follow link types: MODEL purple at the core
+  out to IMAGE blue at the rim.
+- **Real editing**: sliders, combos, seed reroll, prompt text. Drag a
+  panel's title bar to move it. Grab a port dot to rewire or unplug a
+  link. Drop a wire into empty space and a palette grows a new node
+  there, already connected.
+- **Real execution**: queue from inside the space. Websocket events
+  drive panel glow, progress bars, live preview at the hub core, and
+  finished images flying up to the gallery.
+- **3D outputs**: GLB, OBJ, and PLY results get a placard. Click it and
+  the real asset materializes at human scale, lit and slowly turning.
+  Gaussian splat PLYs show as point clouds for now.
+- **Provenance**: drop any ComfyUI PNG into the space and the workflow
+  embedded in it unfolds as a new hub, with the image on its rim.
+- **History recall**: recent generations find their workflows on load
+  and hang in the right gallery.
 
 ## VR
 
-WebXR needs a secure context:
+An `ENTER VR` button appears when a headset runtime is reachable. WebXR
+requires a secure context, so:
 
-- **PCVR** (Rift/Index/WMR on the same machine): open localhost:8189 in
-  Chrome and click ENTER VR. localhost is exempt, nothing to set up.
-- **Quest**: `adb reverse tcp:8189 tcp:8189` over USB, then open
-  http://localhost:8189 in the Quest browser. (Or tunnel https.)
-  On Windows, `quest.ps1` does the waiting, the tunnel, and prints the
-  in-headset steps.
+- **PCVR** (Rift, Index, WMR on the same machine): open the URL in
+  Chrome and click the button. localhost is exempt, nothing to set up.
+- **Quest**: connect USB, run `adb reverse tcp:8188 tcp:8188`, then open
+  `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
+  `quest.ps1` does the waiting, the tunnel, and prints these steps.
 
-Text entry stays on the desktop for now — a phone-as-keyboard companion
-is planned, because typing prompts in VR is nobody's dream.
+### Controls
+
+| | Desktop | VR controllers | VR hands |
+|---|---|---|---|
+| Look / aim | drag mouse | point | point |
+| Move | WASD + QE, wheel | left stick fly, right stick turn | pinch empty space and pull |
+| Click | left click | trigger | pinch |
+| Move a node | drag its title bar | hold trigger on title bar | pinch and hold title bar |
+| Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
+| Back out | Esc | | |
+
+Pinch works because Quest fires the same select events for hand tracking
+as for triggers, so every interaction is hand-native for free. Text
+entry stays on the desktop for now; a phone-as-keyboard companion is
+planned, because typing prompts in VR is nobody's dream.
+
+## Contributing
+
+Early days and moving fast. The most valuable contribution right now is
+**testing on headsets we don't have**. This has been built and verified
+on desktop and is being tested on Quest 2. If you have a Quest 3 or
+Pro, a Pico, an Index or any PCVR setup, a Vision Pro, anything that
+speaks WebXR: please try it and open an issue with your headset model,
+what worked, and what broke. Hand tracking reports are especially
+wanted.
+
+Bug reports, PRs, and wild ideas welcome. The design notes and roadmap
+live in `notes/design.md` and `notes/RELEASE.md`. The codebase is
+plain ES modules with no build step, on purpose: if you can read it,
+you can patch it.
 
 ## Status
 
-Early and moving fast. Rough edges: no node delete yet, the accrete
-palette searches loaded schemas rather than all of object_info, dense
-graphs get beam-crossy, and the in-headset pass is young. Design notes
-and roadmap live in `notes/design.md`.
+Not yet done: node delete, subgraph execution (they render but refuse to
+queue, honestly), proper gaussian splat rendering, voice control, and
+multiplayer presence. The in-headset experience is young. Expect rough
+edges and report them.
+
+Built with three.js. Not affiliated with Comfy Org.
