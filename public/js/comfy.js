@@ -14,7 +14,7 @@ export const LOCAL = HOSTED ? '/comfyvr/local' : '/local';
 
 // 3D outputs (meshes, splats) hide in output dicts under pack-specific
 // keys; detect them by extension anywhere in the arrays.
-export const MESH_EXT = /\.(glb|gltf|obj|ply|splat)$/i;
+export const MESH_EXT = /\.(glb|gltf|obj|ply|splat|ksplat|spz)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mov)$/i;
 const AUDIO_EXT = /\.(mp3|wav|flac|ogg|m4a)$/i;
 
@@ -171,6 +171,17 @@ export class ComfyClient {
       localStorage.setItem('cvr-layouts', JSON.stringify(all));
       return true;
     } catch (e) { return false; }
+  }
+
+  // Everything in ComfyUI's output dir, newest first. The /internal
+  // sub-app is NOT covered by ComfyUI's /api alias, so hosted mode hits it
+  // bare; standalone rides the proxy's /api strip.
+  async listOutputFiles() {
+    if (this.mode !== 'live') return [];
+    try {
+      const r = await fetch(HOSTED ? '/internal/files/output' : API + '/internal/files/output');
+      return r.ok ? await r.json() : [];
+    } catch (e) { return []; }
   }
 
   async history(maxItems = 64) {

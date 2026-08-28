@@ -86,7 +86,11 @@ backend at all so you can explore the space cold.
   live generations and ones recalled from history.
 - **3D outputs**: GLB, OBJ, and PLY results get a placard. Click it and
   the real asset materializes at human scale, lit and slowly turning.
-  Gaussian splat PLYs show as point clouds for now.
+- **Real gaussian splats**: .splat, .ksplat, .spz, and splat PLYs render
+  as actual gaussian splats, at native scale, so a captured room stays
+  a room you can walk into. Scan a space with a phone app that exports
+  splats, drop the file in your ComfyUI output folder as
+  `cvr_demo_<name>.splat`, and it appears in the space.
 - **Provenance**: drop any ComfyUI PNG into the space and the workflow
   embedded in it unfolds as a new hub, with the image on its rim.
 - **History recall**: recent generations find their workflows on load
@@ -178,9 +182,8 @@ What does not work yet, so you know before you fly:
 - **Custom nodes render generically.** Standard widget types (sliders,
   combos, toggles, text) all work; bespoke frontend widgets from node
   packs show as plain values.
-- **Gaussian splat PLYs show as point clouds**, not splats.
-- **No back-out gesture in VR yet.** Leave a hub by flying away or
-  pinching another sigil.
+- **Splat performance on standalone headsets is unproven.** Big scenes
+  may want decimation; reports welcome.
 
 ## Roadmap
 
@@ -199,7 +202,6 @@ workflows, on a screen or standing inside them. In rough order:
 - In-space keyboard for short fields, phone as keyboard for prompts.
 - A hosted demo you can fly with zero install.
 - Gallery recall across restarts, from the output folder itself.
-- Real gaussian splat rendering.
 - Voice: "load my portrait workflow."
 - Presence: two people in the same constellation.
 

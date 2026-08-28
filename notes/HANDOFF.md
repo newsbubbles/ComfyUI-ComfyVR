@@ -179,7 +179,25 @@ node delete, palette open anywhere (search all node types, not just
 link-compatible ones), then a new-empty-workflow hub seeded from a
 template. Anything past that has to earn its place in VR terms.
 
-### Spike 3: real gaussian splats (defined 2026-08-28)
+### Spike 3: real gaussian splats (SHIPPED 2026-08-28, desktop verified)
+
+Shipped same day: vendored `gaussian-splats-3d` 0.4.7 (dynamic import,
+nobody pays the 600KB until a splat materializes), DropInViewer with
+`sharedMemoryForWorkers: false` (no cross-origin-isolation headers on
+our servers) and explicit `format` (extension sniffing fails on /view
+query URLs). Gaussian PLYs detected by `f_dc_0` in the header via a
+Range request; mesh PLYs keep the old path. Splats materialize at
+NATIVE scale (a room stays walkable), rotated 180 about x (splat
+scenes are y-down), and do not idle-spin. Showcase recall: boot scans
+ComfyUI's `/internal/files/output` (bare path in hosted mode, the /api
+alias does NOT cover the internal sub-app; /api-prefixed through the
+standalone proxy) and hangs `cvr_demo_*` 3D files on the first hub.
+`cvr_demo_plush.splat` (9MB) and `cvr_demo_room.splat` (49MB, a real
+captured room) live in the output dir. Plush loads in ~3.6s desktop.
+UNTESTED: Quest framerate; decimation deferred until the field report.
+Original plan follows:
+
+### Spike 3 original plan (defined 2026-08-28)
 
 Today splat PLYs materialize as point clouds (raw gaussian centers).
 The real thing needs per-splat covariance, opacity, and depth-sorted

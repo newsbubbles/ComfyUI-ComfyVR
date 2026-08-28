@@ -6,7 +6,7 @@ import { parseWorkflow, typesAccepting, colorForType, schemaFromObjectInfo } fro
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
-import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi } from './comfy.js';
+import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
 import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
 
@@ -1076,6 +1076,22 @@ async function boot() {
   flashHint('drag look · wasd/qe drift · click sigils/panels · drag headers to move nodes · drop a comfy png · esc back · m mute');
 
   backfillHistory().catch((e) => console.warn('history backfill', e));
+  recallShowcase().catch((e) => console.warn('showcase recall', e));
+}
+
+// cvr_demo_* files in the output dir become assets on the first hub, so
+// demo content (sample splats etc.) is reachable from any device with no
+// workflow run. Interim scaffolding until disk-wide gallery recall lands.
+async function recallShowcase() {
+  const files = await client.listOutputFiles();
+  const demos = files.filter(f => /^cvr_demo_/i.test(f) && MESH_EXT.test(f));
+  if (!demos.length || !hubs.length) return;
+  const hub = hubs[0];
+  let added = 0;
+  for (const f of demos) {
+    if (hub.addAsset({ filename: f, subfolder: '', type: 'output' }, { instant: true })) added++;
+  }
+  if (added) flashHint(`showcase: ${added} demo asset${added > 1 ? 's' : ''} on ${hub.name}`);
 }
 boot().catch((e) => fail('boot: ' + (e.stack || e)));
 

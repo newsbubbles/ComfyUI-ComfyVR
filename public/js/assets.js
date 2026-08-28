@@ -1,13 +1,44 @@
 // assets.js — 3D outputs become objects, not pictures of objects. A
 // gallery placard toggles between thumbnail and the actual asset,
 // materialized in place at human scale. GLB/GLTF/OBJ/PLY load for real;
-// gaussian-splat .ply degrades to a point-cloud preview (a true splat
-// renderer is a planned fast-follow).
+// gaussian splats (.splat/.ksplat/.spz, or a .ply whose header carries
+// f_dc_0) render for real through gaussian-splats-3d, at native scale so
+// a captured room stays a room you can step into.
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { OBJLoader } from '../vendor/OBJLoader.js';
 import { PLYLoader } from '../vendor/PLYLoader.js';
 import { API } from './comfy.js';
+
+const SPLAT_EXTS = new Set(['splat', 'ksplat', 'spz']);
+
+// Gaussian PLYs declare their per-splat properties in a text header.
+async function isGaussianPly(url) {
+  try {
+    const r = await fetch(url, { headers: { Range: 'bytes=0-4095' } });
+    const buf = await r.arrayBuffer();
+    return new TextDecoder('latin1').decode(buf.slice(0, 4096)).includes('f_dc_0');
+  } catch (e) { return false; }
+}
+
+async function loadSplat(url, ext) {
+  // 600KB of renderer nobody pays for until the first splat materializes
+  const GS = await import('../vendor/gaussian-splats-3d.module.js');
+  const fmt = ext === 'ksplat' ? GS.SceneFormat.KSplat
+    : ext === 'splat' ? GS.SceneFormat.Splat
+    : GS.SceneFormat.Ply;
+  const viewer = new GS.DropInViewer({
+    sharedMemoryForWorkers: false,   // our servers send no cross-origin-isolation headers
+    gpuAcceleratedSort: false,
+  });
+  await viewer.addSplatScene(url, {
+    format: fmt,
+    showLoadingUI: false,
+    splatAlphaRemovalThreshold: 5,
+    rotation: [1, 0, 0, 0],          // splat scenes are y-down; flip 180 about x
+  });
+  return viewer;
+}
 
 export function assetUrl(a) {
   return `${API}/view?filename=${encodeURIComponent(a.filename)}&subfolder=${encodeURIComponent(a.subfolder || '')}&type=${a.type}`;
@@ -18,7 +49,8 @@ export async function toggleAsset(hub, item, audio) {
   const st = item.assetState || (item.assetState = {});
   if (st.object) {
     hub.group.remove(st.object);
-    disposeTree(st.object);
+    if (st.isSplat) { st.viewerRef?.dispose?.(); st.isSplat = false; st.viewerRef = null; }
+    else disposeTree(st.object);
     st.object = null;
     item.mesh.scale.setScalar(1);
     item.mesh.position.copy(item.to);
@@ -31,6 +63,21 @@ export async function toggleAsset(hub, item, audio) {
     const url = assetUrl(item.asset);
     const ext = item.asset.filename.split('.').pop().toLowerCase();
     let obj;
+    if (SPLAT_EXTS.has(ext) || (ext === 'ply' && await isGaussianPly(url))) {
+      obj = await loadSplat(url, ext);
+      st.isSplat = true;
+      st.viewerRef = obj;
+      // native scale, no normalization: a captured room stays walkable
+      const holder = new THREE.Group();
+      holder.add(obj);
+      holder.position.copy(item.to || item.mesh.position);
+      hub.group.add(holder);
+      st.object = holder;
+      item.mesh.scale.setScalar(0.35);
+      item.mesh.position.copy(item.to).y -= 1.6;
+      audio?.chime();
+      return;
+    }
     if (ext === 'glb' || ext === 'gltf') {
       obj = (await new GLTFLoader().loadAsync(url)).scene;
     } else if (ext === 'obj') {

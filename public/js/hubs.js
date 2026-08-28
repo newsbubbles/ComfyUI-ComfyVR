@@ -365,7 +365,7 @@ export class Hub {
       gImg.mesh.material.opacity = 0.9 * ft * (0.92 + 0.08 * Math.sin(t * 2 + gImg.phase));
       gImg.mesh.visible = ft > 0.01;
       if (gImg.assetState?.object) {
-        gImg.assetState.object.rotation.y += dt * 0.35;
+        if (!gImg.assetState.isSplat) gImg.assetState.object.rotation.y += dt * 0.35;  // rooms must not spin
         gImg.assetState.object.visible = ft > 0.01;
       }
     }
