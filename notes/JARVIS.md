@@ -36,6 +36,11 @@ Nearly everything exists as working local code:
   TTS, and an ear-readiness rewrite pass that makes assistant text
   sound natural read aloud. The voice half is close to done before we
   start.
+- **The in-headset mic path (SHIPPED 2026-08-29).** The keyboard's
+  DICTATE key already captures Quest mic audio with MediaRecorder,
+  ships it through `/local/stt` in both servers, and types the
+  transcription. J3's hardest line item is field-verified code; the
+  agent path reuses it with a different destination.
 
 ## Architecture
 
@@ -63,20 +68,94 @@ Principles, learned the hard way elsewhere and applied from day one:
   agent is touching. Its speech is positional audio from where it
   stands. Its edits fire the same glow and pulse events as yours.
 
-## Tool surface, first draft
+## Tool surface, by domain (revised 2026-08-29)
 
-Space: `space_state` (where the user is, open hub, queue, last errors),
-`list_workflows`, `open_workflow`, `fly_to`, `describe_workflow`
-(compact graph summary, not raw JSON).
+Six domains, ordered by how dangerous they are. The rule carried over
+from membrane: the agent does LABOR, the user keeps DECISIONS.
 
-Graph: `set_widget`, `rewire`, `add_node`, `read_errors` (the panel
-error surface, already structured per node).
+**Perceive** (read-only, free to call): `space_state` (where the user
+is, open hubs, statuses, queue depth), `describe_workflow` (compact
+graph summary, not raw JSON), `read_node` (widgets, values, errors),
+`read_errors`, `gallery` (recent outputs with provenance),
+`queue_status`, `node_docs` (object_info tooltips are already
+documentation, neurodes especially), `search_nodes`, `find_workflow`
+(rank the user's workflows against an intent; ComfyCloud has this
+shape working).
 
-Run: `queue`, `interrupt`, `queue_status`, `gallery`, `materialize`.
+**Speak and point** (the interaction domain the whole layer hangs on):
+`say(text, near?)` performs a SHORT text-to-speech utterance as an
+action, positional from the agent avatar, which stands near the thing
+it is talking about; `highlight(target, ms)` pulses a node, link, or
+gallery item, the agent's pointing finger; `ask(question, options)`
+raises a small in-space choice panel the user answers by pinch or
+voice, the confirmation primitive every dangerous tool routes
+through. Spatial deixis is the point: the voice comes FROM what it
+means, with the highlight agreeing.
 
-Knowledge: `node_docs` (object_info tooltips are already documentation,
-neurodes especially), `search_nodes`, `find_workflow` (rank the user's
-own workflows against an intent, ComfyCloud has this shape working).
+**Edit the graph** (mutating; every tool is the same code path as a
+pinch, so the user watches it happen): `set_widget`, `rewire`,
+`add_node`, `reroll_seed`. `remove_node` only ARMS the red SURE? on
+the header; the user's own tap confirms. Deletes stay human.
+
+**Arrange the space**: `open_workflow`, `close_workflow`,
+`arrange(hub, scheme)` writing the same layout overrides a drag
+writes. THE CAMERA RULE: no tool ever moves the user's viewpoint
+except in direct fulfillment of a spoken user command ("take me to
+the sampler"); an agent that teleports you on its own initiative is
+motion sickness with a voice.
+
+**Run**: `queue` (allowed freely; queueing is cheap, visible, and
+interruptible), `interrupt`.
+
+**Generate** (see the assets section): `generate_asset(prompt,
+kind)` runs a blessed asset workflow and lets the normal output path
+land the placard in the gallery. Anything that bills an external API
+routes through `ask()` first; local GPU runs do not.
+
+## Voice contract
+
+- Push-to-talk, never hot mic. Candidates: an AGENT key on the wrist
+  watch, or both hands pinched at once. Chosen in the field.
+- Replies are at most two spoken sentences, streamed to Kokoro
+  sentence by sentence so first audio lands fast (budget: under ~3s
+  from release-to-speak to first sound; STT base model is ~1s of
+  that). Anything longer than two sentences becomes a note panel the
+  agent highlights: ears get the summary, eyes get the detail.
+- A pinch anywhere barges in and stops the current utterance.
+- The agent narrates sparingly. Actions are already visible (its
+  edits fire the same glow and pulse events as yours); it speaks to
+  answer, warn, or hand back a decision, not to commentate.
+
+## VR assets: objects now, areas later
+
+"Make VR assets" splits into two different problems:
+
+- **Objects** are ready. ComfyUI v0.23 ships native TripoSplat (image
+  to gaussian splat, saved as .spz, which comfyvr now routes to the
+  right parser) and Hunyuan3D-v2 mesh nodes are already in the local
+  install. `generate_asset(kind=object)` is a blessed workflow away.
+- **Areas** are honestly not solved by anyone as walkable generative
+  geometry. Today the real path for a walkable place is a phone-
+  scanned splat. The tasteful middle step: a `generate_sky` tool
+  running a 360 panorama workflow whose output becomes the void's
+  backdrop, ambience for the whole constellation without pretending
+  to be geometry. True generative walkable scenes stay on watch.
+
+Three lanes for the heavy lifting, in preference order for a 1080:
+
+1. **ComfyUI-fal-Connector** (by a fal engineer; effectively
+   official): submits the WHOLE workflow to fal's GPUs. Kills the
+   local VRAM ceiling without changing the graph.
+2. **Official ComfyUI API Nodes** (Tripo, Rodin and friends, billed
+   through Comfy credits) and **ComfyUI-fal-API** (community,
+   1400+ fal endpoints wrapped as nodes with cost controls): single
+   nodes that call the cloud, mixable into local graphs.
+3. Local: TripoSplat / Hunyuan3D-v2 mini if the 1080 survives them;
+   RunPod for batch work.
+
+All three land files in the output directory, which means the
+existing placard-materialize loop and the XR decimator handle
+delivery with zero new rendering work.
 
 ## Phases
 
@@ -90,10 +169,10 @@ own workflows against an intent, ComfyCloud has this shape working).
   embedded agent steps aside.
 - **J2, voice on desktop.** Speakwright in the loop: push-to-talk on
   the keyboard, spoken replies through the scene's audio engine.
-- **J3, voice in the headset.** Mic capture in the Quest browser,
-  streamed to the server for STT. Push-to-talk gesture to be chosen in
-  the field (candidate: both hands pinched at once opens the mic,
-  release sends). Replies as positional TTS from the agent avatar.
+- **J3, voice in the headset.** The mic capture and STT relay already
+  shipped inside the keyboard's DICTATE path; what remains is routing
+  a transcript to the agent instead of a text field, the push-to-talk
+  gesture (chosen in the field), and positional TTS from the avatar.
 - **J4, knowledge and recipes.** The node_docs / find_workflow tools,
   plus a recipe registry so "make this into a video" resolves to a
   known chain.
