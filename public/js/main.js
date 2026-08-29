@@ -1011,19 +1011,27 @@ $('editor-cancel').addEventListener('click', () => closeEditor(false));
 let kbd = null;
 const MIC_IDLE = '🎤 DICTATE';
 const KB_LETTER_ROWS = [
-  '1234567890'.split(''),
   'qwertyuiop'.split(''),
   "asdfghjkl'".split(''),
   'zxcvbnm,.-'.split(''),
+];
+// prompt syntax needs its own layer: (word:1.2), [a:b:0.5], {x|y}, <lora:...>
+const KB_SYM_ROWS = [
+  '()[]{}<>:;'.split(''),
+  ',.|_-+=/\\*'.split(''),
+  '\'"!?@#%&~^'.split(''),
 ];
 function openKbd(panel, row) {
   closeKbd(false);
   const micRow = buttonRow(MIC_IDLE, () => kbdMic(micRow));
   const xform = (k) => (kbd?.caps ? k.toUpperCase() : k);
+  const gridRows = KB_LETTER_ROWS.map(keys => keysRow(keys.slice(), kbdKey, { xform }));
+  const bottomRow = keysRow(['⇧', 'SYM', 'SPACE', '⌫', 'CLEAR', '✕', 'OK'], kbdKey, { small: true });
   const rows = [
-    kbufRow(row.name, () => kbd?.buffer ?? ''),
-    ...KB_LETTER_ROWS.map(keys => keysRow(keys, kbdKey, { xform })),
-    keysRow(['⇧', 'SPACE', '⌫', 'CLEAR', '✕', 'OK'], kbdKey, { small: true }),
+    kbufRow(row.name, () => kbd?.buffer ?? '', row.oneline ? 2 : 6),
+    keysRow('1234567890'.split(''), kbdKey),
+    ...gridRows,
+    bottomRow,
     micRow,
   ];
   const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.4, billboard: true });
@@ -1034,8 +1042,15 @@ function openKbd(panel, row) {
   kp.placeFlat(scene, head.addScaledVector(dir, 6).add(new THREE.Vector3(0, -0.8, 0)));
   kp.mesh.userData.palette = true;   // same always-reachable rule as the palette
   kp.dirty();
-  kbd = { panel: kp, target: { panel, row }, buffer: String(row.get() ?? ''), caps: false, rec: null, micRow };
+  kbd = { panel: kp, target: { panel, row }, buffer: String(row.get() ?? ''), caps: false, sym: false, rec: null, micRow, gridRows, bottomRow };
   audio.accrete();
+}
+function kbdSetSym(sym) {
+  kbd.sym = sym;
+  const src = sym ? KB_SYM_ROWS : KB_LETTER_ROWS;
+  kbd.gridRows.forEach((row, i) => { row.keys = src[i].slice(); });
+  kbd.bottomRow.keys[1] = sym ? 'ABC' : 'SYM';
+  kbd.panel.dirty();
 }
 function closeKbd(commit) {
   if (!kbd) return;
@@ -1055,6 +1070,8 @@ function kbdKey(k) {
   if (!kbd) return;
   switch (k) {
     case '⇧': kbd.caps = !kbd.caps; break;
+    case 'SYM': kbdSetSym(true); break;
+    case 'ABC': kbdSetSym(false); break;
     case 'SPACE': kbd.buffer += ' '; break;
     case '⌫': kbd.buffer = kbd.buffer.slice(0, -1); break;
     case 'CLEAR': kbd.buffer = ''; break;

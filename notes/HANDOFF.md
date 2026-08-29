@@ -230,8 +230,17 @@ alpha blending. Plan:
 Text rows no longer bounce to the monitor in XR. Pinching a text field
 opens an in-space keyboard panel (new `keys` + `kbuf` row kinds in
 panels.js, per-key hover highlight via `setHotFrac`): number row, three
-letter rows, then shift / space / backspace / clear / cancel / OK, and
-a DICTATE button. Dictation records with MediaRecorder (webm/opus),
+letter rows, then shift / SYM / space / backspace / clear / cancel /
+OK, and a DICTATE button. SYM swaps the letter rows for a symbol layer
+built for prompt syntax: `()[]{}<>:;`, `,.|_-+=/\*`, `'"!?@#%&~^`
+(weights, alternation, loras, wildcards all typeable). The keyboard is
+the VR counterpart of the desktop editor modal, same contract: opens
+preloaded with the field text, edits a buffer copy, OK commits, ✕
+discards, the widget is untouched until OK. Buffer shows the last 6
+wrapped lines (2 for oneline fields); caret is pinned to the end, so
+editing is append/backspace/dictate. Mid-text caret placement (pinch a
+spot in the buffer to put the caret there) is the natural next step if
+tail-editing proves too limiting. Dictation records with MediaRecorder (webm/opus),
 POSTs to `LOCAL + '/stt'`, and both servers proxy that to a local
 whisper sidecar speaking the OpenAI audio API on 127.0.0.1:8765
 (override with COMFYVR_STT). Speakwright is the sidecar it was built

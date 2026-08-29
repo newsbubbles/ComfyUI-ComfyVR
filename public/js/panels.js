@@ -110,6 +110,7 @@ export class Panel {
 
   rowH(r) {
     if (r.kind === 'port') return ROW_H.port * r.lines;
+    if (r.kind === 'kbuf') return 26 + (r.lines || 3) * 19 + 8;
     if (r.kind === 'text' && r.oneline) return ROW_H.textline;
     if (r.kind === 'note') {
       // full note body: height follows the wrapped text, computed once
@@ -441,7 +442,7 @@ export class Panel {
         g.fillStyle = '#e8fffb';
         g.font = FONT(15);
         const lines = wrapText(g, String(r.get() || '') + '▍', W - 2 * PAD);
-        lines.slice(-3).forEach((ln, i) => g.fillText(ln, PAD, y + 32 + i * 19));
+        lines.slice(-(r.lines || 3)).forEach((ln, i) => g.fillText(ln, PAD, y + 32 + i * 19));
         break;
       }
     }
@@ -520,7 +521,7 @@ export function readoutRow(get, get2) { return { kind: 'readout', get, get2 }; }
 export function alertRow(get) { return { kind: 'alert', get }; }
 export function glyphRow(text, big = false) { return { kind: 'glyphs', text, big }; }
 export function keysRow(keys, onKey, opts = {}) { return { kind: 'keys', keys, onKey, ...opts }; }
-export function kbufRow(name, get) { return { kind: 'kbuf', name, get }; }
+export function kbufRow(name, get, lines = 3) { return { kind: 'kbuf', name, get, lines }; }
 
 // ------- small helpers -------
 function roundRect(g, x, y, w, h, r) {
