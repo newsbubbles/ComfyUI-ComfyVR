@@ -201,8 +201,11 @@ What does not work yet, so you know before you fly:
 - **Custom nodes render generically.** Standard widget types (sliders,
   combos, toggles, text) all work; bespoke frontend widgets from node
   packs show as plain values.
-- **Splat performance on standalone headsets is unproven.** Big scenes
-  may want decimation; reports welcome.
+- **Splat quality drops in VR on purpose.** In a headset, .splat files
+  are decimated at load to a budget the mobile GPU can sort, keeping
+  the splats that carry the visual mass; desktop always renders full
+  resolution. Reports on how big scenes feel on your headset are
+  welcome.
 
 ## Roadmap
 

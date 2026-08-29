@@ -895,7 +895,7 @@ function onClick(e) {
   if (gallery) {
     const item = hub.gallery.find(g => g.mesh === hit.object);
     if (item?.asset) {  // placard <-> real 3D object
-      toggleAsset(hub, item, audio).catch(e => flashHint('asset load failed: ' + (e.message || e)));
+      toggleAsset(hub, item, audio, { xr: renderer.xr.isPresenting }).catch(e => flashHint('asset load failed: ' + (e.message || e)));
       return;
     }
     if (item?.video) {
@@ -1580,7 +1580,7 @@ function xrSelectStart(st) {
   }
   if (hit.gallery) {
     const item = hit.hub?.gallery.find(g => g.mesh === hit.object);
-    if (item?.asset) { toggleAsset(hit.hub, item, audio).catch(() => {}); return; }
+    if (item?.asset) { toggleAsset(hit.hub, item, audio, { xr: true }).catch(() => {}); return; }
     if (item?.video) { item.video.muted = !item.video.muted; item.video.play().catch(() => {}); return; }
     if (item?.audioEl) {
       if (item.audioEl.paused) item.audioEl.play().catch(() => {});
