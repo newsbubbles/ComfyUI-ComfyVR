@@ -74,9 +74,11 @@ backend at all so you can explore the space cold.
   amber. Notes render in full, and LoadImage shows the image it points
   at.
 - **Text entry without leaving the headset**: pinching a text field in
-  VR opens a floating keyboard you type on key by key, with a SYM
-  layer for prompt syntax (parentheses, brackets, pipes, weights) and
-  a DICTATE key that records your voice and types the transcription. Dictation
+  VR opens a floating keyboard with a real cursor: pinch anywhere in
+  the text to put the caret there, arrow keys to nudge it, and typing,
+  backspace, and dictation all happen at the caret. A SYM layer covers
+  prompt syntax (parentheses, brackets, pipes, weights), and the
+  DICTATE key records your voice and types the transcription. Dictation
   uses a local whisper sidecar on your PC (anything speaking the
   OpenAI audio API on 127.0.0.1:8765), so audio never leaves your
   machine. The first tap asks for mic permission once. On desktop,

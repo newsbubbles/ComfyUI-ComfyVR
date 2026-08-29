@@ -866,7 +866,7 @@ function hover(e) {
 }
 
 function isInteractive(ri) {
-  return ri.row && ['slider', 'seed', 'combo', 'toggle', 'text', 'button', 'keys'].includes(ri.kind);
+  return ri.row && ['slider', 'seed', 'combo', 'toggle', 'text', 'button', 'keys', 'kbuf'].includes(ri.kind);
 }
 
 function onClick(e) {
@@ -946,6 +946,24 @@ function interact(panel, hub, ri) {
       row.onKey?.(row.keys[i]);
       break;
     }
+    case 'kbuf': {
+      // pinch the text itself to put the caret there, using the layout the
+      // last draw stashed on the row (monospace: column is arithmetic)
+      if (!kbd || row !== kbd.bufRow || !row._hit) break;
+      const { first, lines, charW, count } = row._hit;
+      const localY = (ri.yFrac ?? 0) * panel.rowH(row);
+      const li = Math.max(0, Math.min(count - 1, Math.round((localY - 32) / 19)));
+      const line = lines[first + li];
+      if (line) {
+        const col = Math.max(0, Math.min(line.t.length, Math.round((ri.frac ?? 0) * (PW - 36) / charW)));
+        kbd.caret = line.s + col;
+      } else {
+        kbd.caret = kbd.buffer.length;
+      }
+      audio.tick();
+      kbd.panel.dirty();
+      break;
+    }
   }
 }
 
@@ -1021,14 +1039,17 @@ const KB_SYM_ROWS = [
   ',.|_-+=/\\*'.split(''),
   '\'"!?@#%&~^'.split(''),
 ];
+function kbBottomKeys(sym) { return ['✕', 'CLEAR', '⇧', sym ? 'ABC' : 'SYM', '◂', '▸', 'SPACE', '⌫', 'OK']; }
 function openKbd(panel, row) {
   closeKbd(false);
   const micRow = buttonRow(MIC_IDLE, () => kbdMic(micRow));
   const xform = (k) => (kbd?.caps ? k.toUpperCase() : k);
   const gridRows = KB_LETTER_ROWS.map(keys => keysRow(keys.slice(), kbdKey, { xform }));
-  const bottomRow = keysRow(['⇧', 'SYM', 'SPACE', '⌫', 'CLEAR', '✕', 'OK'], kbdKey, { small: true });
+  const bottomRow = keysRow(kbBottomKeys(false), kbdKey, { small: true });
+  const bufRow = kbufRow(row.name, () => kbd?.buffer ?? '', row.oneline ? 2 : 6);
+  bufRow.caret = () => kbd?.caret ?? 0;
   const rows = [
-    kbufRow(row.name, () => kbd?.buffer ?? '', row.oneline ? 2 : 6),
+    bufRow,
     keysRow('1234567890'.split(''), kbdKey),
     ...gridRows,
     bottomRow,
@@ -1042,15 +1063,21 @@ function openKbd(panel, row) {
   kp.placeFlat(scene, head.addScaledVector(dir, 6).add(new THREE.Vector3(0, -0.8, 0)));
   kp.mesh.userData.palette = true;   // same always-reachable rule as the palette
   kp.dirty();
-  kbd = { panel: kp, target: { panel, row }, buffer: String(row.get() ?? ''), caps: false, sym: false, rec: null, micRow, gridRows, bottomRow };
+  const buffer = String(row.get() ?? '');
+  kbd = { panel: kp, target: { panel, row }, buffer, caret: buffer.length, caps: false, sym: false, rec: null, micRow, gridRows, bottomRow, bufRow };
   audio.accrete();
 }
 function kbdSetSym(sym) {
   kbd.sym = sym;
   const src = sym ? KB_SYM_ROWS : KB_LETTER_ROWS;
   kbd.gridRows.forEach((row, i) => { row.keys = src[i].slice(); });
-  kbd.bottomRow.keys[1] = sym ? 'ABC' : 'SYM';
+  kbd.bottomRow.keys = kbBottomKeys(sym);
   kbd.panel.dirty();
+}
+function kbdInsert(txt) {
+  const c = kbd.caret;
+  kbd.buffer = kbd.buffer.slice(0, c) + txt + kbd.buffer.slice(c);
+  kbd.caret = c + txt.length;
 }
 function closeKbd(commit) {
   if (!kbd) return;
@@ -1072,12 +1099,19 @@ function kbdKey(k) {
     case '⇧': kbd.caps = !kbd.caps; break;
     case 'SYM': kbdSetSym(true); break;
     case 'ABC': kbdSetSym(false); break;
-    case 'SPACE': kbd.buffer += ' '; break;
-    case '⌫': kbd.buffer = kbd.buffer.slice(0, -1); break;
-    case 'CLEAR': kbd.buffer = ''; break;
+    case '◂': kbd.caret = Math.max(0, kbd.caret - 1); break;
+    case '▸': kbd.caret = Math.min(kbd.buffer.length, kbd.caret + 1); break;
+    case 'SPACE': kbdInsert(' '); break;
+    case '⌫':
+      if (kbd.caret > 0) {
+        kbd.buffer = kbd.buffer.slice(0, kbd.caret - 1) + kbd.buffer.slice(kbd.caret);
+        kbd.caret--;
+      }
+      break;
+    case 'CLEAR': kbd.buffer = ''; kbd.caret = 0; break;
     case '✕': closeKbd(false); return;
     case 'OK': closeKbd(true); return;
-    default: kbd.buffer += kbd.caps ? k.toUpperCase() : k;
+    default: kbdInsert(kbd.caps ? k.toUpperCase() : k);
   }
   audio.tick();
   kbd.panel.dirty();
@@ -1103,7 +1137,10 @@ async function kbdMic(micRow) {
       if (!kbd) return;             // keyboard closed mid-recording: drop it
       try {
         const text = await client.stt(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
-        if (kbd && text) kbd.buffer += (kbd.buffer && !/\s$/.test(kbd.buffer) ? ' ' : '') + text;
+        if (kbd && text) {
+          const before = kbd.buffer.slice(0, kbd.caret);
+          kbdInsert((before && !/\s$/.test(before) ? ' ' : '') + text);
+        }
       } catch (e) {
         flashHint('dictation failed: ' + (e.message || e));
       }

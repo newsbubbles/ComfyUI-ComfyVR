@@ -435,14 +435,35 @@ export class Panel {
         break;
       }
       case 'kbuf': {
-        // keyboard buffer: tail of the text being typed, with a caret
+        // keyboard buffer: a caret-following window over the wrapped text.
+        // The caret renders as a bar at its exact character cell, and the
+        // hit map is stashed on the row so a pinch can place the caret.
         g.fillStyle = withAlpha(A, 0.55);
         g.font = FONT(12);
         g.fillText(String(r.name || '').toUpperCase(), PAD, y + 12);
-        g.fillStyle = '#e8fffb';
         g.font = FONT(15);
-        const lines = wrapText(g, String(r.get() || '') + '▍', W - 2 * PAD);
-        lines.slice(-(r.lines || 3)).forEach((ln, i) => g.fillText(ln, PAD, y + 32 + i * 19));
+        const charW = g.measureText('0').width;
+        const maxChars = Math.max(4, Math.floor((W - 2 * PAD) / charW));
+        const buf = String(r.get() || '');
+        const lines = wrapIdx(buf, maxChars);
+        if (!lines.length) lines.push({ s: 0, t: '' });
+        const N = r.lines || 3;
+        const c = Math.max(0, Math.min(buf.length, r.caret ? r.caret() : buf.length));
+        let cl = 0;
+        for (let i = 0; i < lines.length; i++) if (lines[i].s <= c) cl = i;
+        const first = Math.max(0, Math.min(cl - (N - 1), lines.length - N, cl));
+        const vis = lines.slice(first, Math.max(first, 0) + N);
+        g.fillStyle = '#e8fffb';
+        vis.forEach((ln, i) => g.fillText(ln.t, PAD, y + 32 + i * 19));
+        const col = Math.min(c - lines[cl].s, lines[cl].t.length);
+        g.fillStyle = A;
+        g.fillRect(PAD + col * charW - 1, y + 32 + (cl - first) * 19 - 9, 2, 18);
+        // out-of-window markers on the label strip
+        g.font = FONT(11); g.fillStyle = withAlpha(A, 0.6); g.textAlign = 'right';
+        const above = first > 0, below = first + N < lines.length;
+        if (above || below) g.fillText((above ? '▲' : '') + (below ? ' ▼' : ''), W - PAD, y + 12);
+        g.textAlign = 'left';
+        r._hit = { first, lines, charW, count: vis.length };
         break;
       }
     }
@@ -556,6 +577,29 @@ function wrap(g, s, w) {
   if (cur) out.push(cur);
   return out;
 }
+// Index-preserving wrap for the keyboard buffer: every line is an EXACT
+// substring of the input (no whitespace collapsing), so a caret index maps
+// to line and column by arithmetic. Monospace font, so fitting is by count.
+export function wrapIdx(s, maxChars) {
+  const out = [];
+  let p0 = 0;
+  for (const para of String(s).split('\n')) {
+    if (!para.length) out.push({ s: p0, t: '' });
+    let i = 0;
+    while (i < para.length) {
+      let end = Math.min(i + maxChars, para.length);
+      if (end < para.length) {
+        const cut = para.lastIndexOf(' ', end - 1);
+        if (cut >= i) end = cut + 1;   // the space stays on this line
+      }
+      out.push({ s: p0 + i, t: para.slice(i, end) });
+      i = end;
+    }
+    p0 += para.length + 1;             // + the newline itself
+  }
+  return out;
+}
+
 // Paragraph-aware wrapping: blank lines and line breaks survive.
 function wrapText(g, s, w) {
   const out = [];

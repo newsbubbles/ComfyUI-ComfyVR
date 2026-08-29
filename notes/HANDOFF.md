@@ -236,11 +236,15 @@ built for prompt syntax: `()[]{}<>:;`, `,.|_-+=/\*`, `'"!?@#%&~^`
 (weights, alternation, loras, wildcards all typeable). The keyboard is
 the VR counterpart of the desktop editor modal, same contract: opens
 preloaded with the field text, edits a buffer copy, OK commits, ✕
-discards, the widget is untouched until OK. Buffer shows the last 6
-wrapped lines (2 for oneline fields); caret is pinned to the end, so
-editing is append/backspace/dictate. Mid-text caret placement (pinch a
-spot in the buffer to put the caret there) is the natural next step if
-tail-editing proves too limiting. Dictation records with MediaRecorder (webm/opus),
+discards, the widget is untouched until OK. The buffer is a real
+editor: a caret rendered at its exact character cell, placed by
+pinching the text (wrapIdx in panels.js wraps to EXACT substrings so
+caret index maps to line and column by arithmetic; the draw stashes
+the layout on the row as _hit and interact reads it back), nudged by
+arrow keys, with insert, backspace, and dictation all caret-relative.
+The 6-line window follows the caret (2 lines for oneline fields),
+with markers when text extends beyond it. wrapText collapses runs of
+whitespace so it could not carry a caret; that is why wrapIdx exists. Dictation records with MediaRecorder (webm/opus),
 POSTs to `LOCAL + '/stt'`, and both servers proxy that to a local
 whisper sidecar speaking the OpenAI audio API on 127.0.0.1:8765
 (override with COMFYVR_STT). Speakwright is the sidecar it was built
