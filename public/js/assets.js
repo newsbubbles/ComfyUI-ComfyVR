@@ -50,6 +50,7 @@ async function loadSplat(url, ext, xr = false) {
   const GS = await import('../vendor/gaussian-splats-3d.module.js');
   const fmt = ext === 'ksplat' ? GS.SceneFormat.KSplat
     : ext === 'splat' ? GS.SceneFormat.Splat
+    : ext === 'spz' ? GS.SceneFormat.Spz    // ComfyUI's native TripoSplat pipeline saves .spz
     : GS.SceneFormat.Ply;
   let src = url, revoke = null;
   if (xr && ext === 'splat') {
