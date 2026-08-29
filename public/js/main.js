@@ -199,10 +199,11 @@ let lastInput = performance.now();
 const canvas = renderer.domElement;
 
 canvas.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary) return;   // a second touch must not fight the first over the camera
   audio.ensure();
   try { THREE.AudioContext.getContext().resume(); } catch (err) { /* no positional audio yet */ }
   lastInput = performance.now();
-  pdown = { x: e.clientX, y: e.clientY };
+  pdown = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY };
   dragMode = null; pendingGrab = null;
   const hit = pick(e);
   if (hit && reachable(hit) && hit.rowInfo) {
@@ -229,6 +230,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events have no real pointerId */ }
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (!e.isPrimary) return;
   cam.mouse.x = (e.clientX / innerWidth) * 2 - 1;
   cam.mouse.y = (e.clientY / innerHeight) * 2 - 1;
   if (dragMode === 'slider' && sliderDrag) {
@@ -239,6 +241,14 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (pdown) {
     lastInput = performance.now();
+    // deltas from clientX, never movementX: Firefox-family browsers (Wolvic
+    // on Quest included) report movementX for synthesized pointer events as
+    // huge jumps, zeros, or undefined, which sent the camera spinning
+    let dx = e.clientX - pdown.lx, dy = e.clientY - pdown.ly;
+    pdown.lx = e.clientX; pdown.ly = e.clientY;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) { dx = 0; dy = 0; }
+    dx = THREE.MathUtils.clamp(dx, -60, 60);
+    dy = THREE.MathUtils.clamp(dy, -60, 60);
     const moved = Math.hypot(e.clientX - pdown.x, e.clientY - pdown.y) > 4;
     if (!dragMode && moved && pendingGrab) {
       if (pendingGrab.kind === 'move') beginMove(pendingGrab, e);
@@ -248,8 +258,8 @@ canvas.addEventListener('pointermove', (e) => {
     if (dragMode === 'link') { doLinkDrag(e); return; }
     if (dragMode === 'look' || moved) {
       dragMode = 'look';
-      cam.yaw -= e.movementX * 0.0031;
-      cam.pitch = THREE.MathUtils.clamp(cam.pitch - e.movementY * 0.0031, -1.5, 1.5);
+      cam.yaw -= dx * 0.0031;
+      cam.pitch = THREE.MathUtils.clamp(cam.pitch - dy * 0.0031, -1.5, 1.5);
       cam.anim = null; cam.dock = null;
       if (cam.level === 'panel') cam.level = 'hub';
     }
@@ -258,11 +268,17 @@ canvas.addEventListener('pointermove', (e) => {
   hover(e);
 });
 canvas.addEventListener('pointerup', (e) => {
+  if (!e.isPrimary) return;
   lastInput = performance.now();
   if (dragMode === null && pdown) onClick(e);
   if (dragMode === 'slider') audio.tick();
   if (dragMode === 'move') endMove();
   if (dragMode === 'link') endLink(e);
+  pdown = null; dragMode = null; sliderDrag = null; pendingGrab = null;
+});
+canvas.addEventListener('pointercancel', () => {
+  // Wolvic cancels the pointer stream on some transitions; a stuck pdown
+  // would keep steering the camera with stale state
   pdown = null; dragMode = null; sliderDrag = null; pendingGrab = null;
 });
 canvas.addEventListener('wheel', (e) => {
@@ -1638,8 +1654,13 @@ function xrTick(dt) {
   for (const src of session.inputSources) {
     const gp = src.gamepad;
     if (!gp) continue;                       // hands: no sticks, pinch = select
-    const x = gp.axes.length >= 4 ? gp.axes[2] : (gp.axes[0] || 0);
-    const y = gp.axes.length >= 4 ? gp.axes[3] : (gp.axes[1] || 0);
+    // xr-standard puts the thumbstick at axes[2,3], but not every runtime
+    // complies; take whichever pair actually carries signal, and never let
+    // a non-finite axis reach the camera
+    const A = (i) => (Number.isFinite(gp.axes[i]) ? gp.axes[i] : 0);
+    const hi = gp.axes.length >= 4 && (Math.abs(A(2)) + Math.abs(A(3)) >= Math.abs(A(0)) + Math.abs(A(1)));
+    const x = hi ? A(2) : A(0);
+    const y = hi ? A(3) : A(1);
     if (src.handedness === 'left') {
       if (Math.abs(x) > 0.15 || Math.abs(y) > 0.15) {
         camera.getWorldQuaternion(_q);

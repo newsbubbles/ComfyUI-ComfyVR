@@ -31,6 +31,7 @@ export class Hub {
     this.corePanel = null;
     this.gallery = [];           // {mesh, tex}
     this.status = 'idle';
+    this.beaconBurst = 0;
     this.progress = 0;
     this.runningNode = null;
     this.glyph = GLYPHS[hashStr(this.name) % GLYPHS.length];
@@ -354,8 +355,15 @@ export class Hub {
     this.sigil.mesh.visible = ft < 0.98;
     this.sigil.mesh.scale.setScalar(far);
     this.sigil.update(t);
-    this.beacon.material.opacity = (1 - ft) * (0.35 + 0.15 * Math.sin(t * 1.7 + this.sigil.id));
-    const pulse = this.status === 'running' ? 1 + 0.3 * Math.sin(t * 6) : 1;
+    // the beacon is the horizon-readable state: amber and fast while work is
+    // queued or running, red on error, calm cyan otherwise, and a bright
+    // burst the moment a new piece lands in the gallery
+    const busy = this.status === 'running' || this.status === 'queued';
+    this.beacon.material.color.set(this.status === 'error' ? 0xff6a6a : busy ? 0xffd54a : 0x59e6d2);
+    if (this.beaconBurst > 0.003) this.beaconBurst *= Math.exp(-dt * 1.6); else this.beaconBurst = 0;
+    const breathe = busy ? 0.5 + 0.28 * Math.sin(t * 9) : 0.35 + 0.15 * Math.sin(t * 1.7 + this.sigil.id);
+    this.beacon.material.opacity = (1 - ft) * Math.min(1, breathe + this.beaconBurst * 0.6);
+    const pulse = (busy ? 1 + 0.4 * Math.sin(t * 9) : 1) + this.beaconBurst * 1.4;
     this.beacon.scale.setScalar(18 * far * pulse);
 
     for (const gImg of this.gallery) {
@@ -384,7 +392,14 @@ export class Hub {
   }
 
   // ---------- execution events (live ws and demo sim share this surface) ----------
-  onStatus(s) { this.status = s; this.sigil.dirty(); this.corePanel?.dirty(); }
+  onStatus(s) {
+    this.status = s;
+    // the sigil frame wears the state color too, for the mid-distance band
+    // where the beacon is small but the panel border still reads
+    const a = s === 'error' ? '#ff6a6a' : (s === 'running' || s === 'queued') ? '#ffd54a' : '#7ce8dc';
+    if (this.sigil && this.sigil.accent !== a) this.sigil.accent = a;
+    this.sigil.dirty(); this.corePanel?.dirty();
+  }
 
   onExecuting(nodeId) {
     if (nodeId == null) { this.runningNode = null; this.onStatus('idle'); return; }
@@ -465,6 +480,7 @@ export class Hub {
     const to = this.gallerySlot(this.gallery.length);
     const from = new THREE.Vector3(-Math.cos(this.meanAngle) * 2.6, 4.0, -Math.sin(this.meanAngle) * 2.6);
     mesh.position.copy(instant ? to : from);
+    if (!instant) this.beaconBurst = 1;   // fresh arrival flashes the beacon for the horizon
     this.group.add(mesh);
     const item = { mesh, tex, phase: Math.random() * 6.28, birthT: instant ? Infinity : 0, from, to, asset, meta, sx: 1, sy: 1 };
     this.gallery.push(item);
