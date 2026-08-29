@@ -173,6 +173,21 @@ export class ComfyClient {
     } catch (e) { return false; }
   }
 
+  // Dictated audio -> text, through the server to a local whisper sidecar
+  // (speakwright on 127.0.0.1:8765). The server owns the sidecar address so
+  // the headset only ever talks to this origin.
+  async stt(blob) {
+    const fd = new FormData();
+    fd.append('file', blob, 'rec.webm');
+    const r = await fetch(LOCAL + '/stt', { method: 'POST', body: fd });
+    if (!r.ok) {
+      let msg = 'stt ' + r.status;
+      try { msg = (await r.json()).error || msg; } catch (e) { /* not json */ }
+      throw new Error(msg);
+    }
+    return String((await r.json()).text || '').trim();
+  }
+
   // Everything in ComfyUI's output dir, newest first. The /internal
   // sub-app is NOT covered by ComfyUI's /api alias, so hosted mode hits it
   // bare; standalone rides the proxy's /api strip.

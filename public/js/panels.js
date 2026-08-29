@@ -7,7 +7,7 @@ import { colorForType } from './graph.js';
 
 export const PW = 512;                      // canvas px width
 const PAD = 18;
-export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24, alert: 24 };
+export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24, alert: 24, keys: 52, kbuf: 96 };
 const ERR = '#ff6a6a';
 const FONT = (px, bold) => `${bold ? 'bold ' : ''}${px}px Consolas, "Courier New", monospace`;
 const NOTE_MAX_LINES = 40;
@@ -415,10 +415,49 @@ export class Panel {
         g.fillText(r.text, W / 2, mid + (r.big ? 4 : 0));
         g.textAlign = 'left'; break;
       }
+      case 'keys': {
+        // one row of the in-space keyboard: uniform cells, the hovered cell
+        // lit so a shaky VR ray always shows which key it would hit
+        const n = r.keys.length, cw = (W - 2 * PAD) / n;
+        const hotIdx = hot && this.hotFrac != null
+          ? Math.min(n - 1, Math.max(0, Math.floor(this.hotFrac * n))) : -1;
+        g.font = FONT(r.small ? 13 : 18, true); g.textAlign = 'center';
+        r.keys.forEach((k, i) => {
+          const x = PAD + i * cw;
+          if (i === hotIdx) { g.fillStyle = withAlpha(A, 0.28); roundRect(g, x + 2, y + 5, cw - 4, h - 10, 6); g.fill(); }
+          g.strokeStyle = withAlpha(A, i === hotIdx ? 1 : 0.4); g.lineWidth = i === hotIdx ? 2.5 : 1.25;
+          roundRect(g, x + 2, y + 5, cw - 4, h - 10, 6); g.stroke();
+          g.fillStyle = i === hotIdx ? '#e8fffb' : withAlpha(A, 0.85);
+          g.fillText(r.xform ? r.xform(k) : k, x + cw / 2, mid);
+        });
+        g.textAlign = 'left';
+        break;
+      }
+      case 'kbuf': {
+        // keyboard buffer: tail of the text being typed, with a caret
+        g.fillStyle = withAlpha(A, 0.55);
+        g.font = FONT(12);
+        g.fillText(String(r.name || '').toUpperCase(), PAD, y + 12);
+        g.fillStyle = '#e8fffb';
+        g.font = FONT(15);
+        const lines = wrapText(g, String(r.get() || '') + '▍', W - 2 * PAD);
+        lines.slice(-3).forEach((ln, i) => g.fillText(ln, PAD, y + 32 + i * 19));
+        break;
+      }
     }
   }
 
   setHot(row) { if (this.hot !== row) { this.hot = row; this.dirty(); } }
+
+  // Per-key hover for 'keys' rows: redraw only when the pointed-at cell
+  // changes, so sweeping a ray across the keyboard stays cheap.
+  setHotFrac(frac) {
+    if (this.hot?.kind !== 'keys') { this.hotFrac = null; return; }
+    const n = this.hot.keys.length;
+    const idx = Math.min(n - 1, Math.max(0, Math.floor((frac ?? 0) * n)));
+    this.hotFrac = frac;
+    if (this._hotKeyIdx !== idx) { this._hotKeyIdx = idx; this.dirty(); }
+  }
 
   setHint(hint) {
     const same = (!hint && !this.hint) || (hint && this.hint && hint.type === this.hint.type && hint.dir === this.hint.dir);
@@ -480,6 +519,8 @@ export function imageRow(placeholder) { return { kind: 'image', img: null, place
 export function readoutRow(get, get2) { return { kind: 'readout', get, get2 }; }
 export function alertRow(get) { return { kind: 'alert', get }; }
 export function glyphRow(text, big = false) { return { kind: 'glyphs', text, big }; }
+export function keysRow(keys, onKey, opts = {}) { return { kind: 'keys', keys, onKey, ...opts }; }
+export function kbufRow(name, get) { return { kind: 'kbuf', name, get }; }
 
 // ------- small helpers -------
 function roundRect(g, x, y, w, h, r) {

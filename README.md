@@ -73,6 +73,13 @@ backend at all so you can explore the space cold.
   checkpoint names you do not have snap to ones you do, marked in
   amber. Notes render in full, and LoadImage shows the image it points
   at.
+- **Text entry without leaving the headset**: pinching a text field in
+  VR opens a floating keyboard you type on key by key, with a DICTATE
+  key that records your voice and types the transcription. Dictation
+  uses a local whisper sidecar on your PC (anything speaking the
+  OpenAI audio API on 127.0.0.1:8765), so audio never leaves your
+  machine. The first tap asks for mic permission once. On desktop,
+  text fields open a regular editor overlay.
 - **Real execution**: queue from inside the space. Websocket events
   drive panel glow, progress bars, live preview at the hub core, and
   finished images flying up to the gallery. The HUD shows queue depth.
@@ -135,13 +142,15 @@ requires a secure context, and there are three ways to get one:
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
 | Add a node | drop a wire from any port into space | same, by ray | same, by pinch |
 | Delete a node | ✕ on its header, twice | same, by ray | same, by pinch |
+| Edit text | click the field | in-space keyboard, or dictate | same |
 | Browse workflows | library at the center | same | same |
 | Back out | Esc | wrist watch | wrist watch |
 
 To leave VR with bare hands, look at your left wrist: a small watch
 panel carries BACK OUT (return to the constellation) and EXIT VR,
-plus live queue status. The system gesture also always works: palm up
-facing you, then pinch and hold the floating logo.
+plus live queue status. The face turns to meet your eyes at any wrist
+angle. The system gesture also always works: palm up facing you, then
+pinch and hold the floating logo.
 
 To record your session in HD, run `record.ps1` with the headset
 connected once: it switches the built-in capture from the default
@@ -150,9 +159,9 @@ adb so later runs need no cable. Turn the microphone on in the Camera
 app to narrate. Recordings land in `/sdcard/Oculus/VideoShots`.
 
 Pinch works because Quest fires the same select events for hand tracking
-as for triggers, so every interaction is hand-native for free. Text
-entry stays on the desktop for now; a phone-as-keyboard companion is
-planned, because typing prompts in VR is nobody's dream.
+as for triggers, so every interaction is hand-native for free,
+including the keyboard: pinch a text field and it appears in front of
+you. For anything longer than a few words, tap DICTATE and talk.
 
 ## Contributing
 
@@ -173,10 +182,11 @@ you can patch it.
 
 What does not work yet, so you know before you fly:
 
-- **Text entry in VR opens on the monitor.** The prompt editor is a
-  regular browser element and those cannot render inside an immersive
-  session. A message tells you where it went. An in-space keyboard and
-  a phone-as-keyboard companion are the planned fixes.
+- **Dictation needs a helper on the PC.** The in-space keyboard always
+  works, but the DICTATE key needs a local transcription server
+  speaking the OpenAI audio API on 127.0.0.1:8765 (any faster-whisper
+  wrapper does). Without one it says so, and the keys keep working.
+  Point COMFYVR_STT elsewhere if your sidecar lives on another port.
 - **Subgraphs render but refuse to queue.** You get a readable message
   instead of a broken run. Flatten them in ComfyUI for now.
 - **You cannot create a workflow from nothing yet.** Editing today
@@ -204,7 +214,6 @@ workflows, on a screen or standing inside them. In rough order:
   Quest reaches headset storage, including your screenshots and
   downloads, so feeding a LoadImage node from the headset gallery is a
   real path.
-- In-space keyboard for short fields, phone as keyboard for prompts.
 - A hosted demo you can fly with zero install.
 - Gallery recall across restarts, from the output folder itself.
 - Voice: "load my portrait workflow."

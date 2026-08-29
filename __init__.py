@@ -96,6 +96,31 @@ try:
             json.dump(body, fh)
         return web.json_response({"saved": key})
 
+    # Dictation: forward audio to a local whisper sidecar (speakwright),
+    # so the headset only ever talks to this origin.
+    @routes.post("/comfyvr/local/stt")
+    async def cvr_stt(request):
+        import aiohttp
+        stt_backend = os.environ.get("COMFYVR_STT", "http://127.0.0.1:8765")
+        data = await request.read()
+        headers = {"Content-Type": request.headers.get("Content-Type", "")}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    stt_backend + "/v1/audio/transcriptions",
+                    data=data,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as r:
+                    body = await r.read()
+                    ct = r.headers.get("Content-Type", "application/json")
+                    return web.Response(status=r.status, body=body, headers={"Content-Type": ct})
+        except Exception as e:
+            return web.json_response(
+                {"error": "voice sidecar not running (start speakwright on 127.0.0.1:8765)", "detail": str(e)},
+                status=502,
+            )
+
     @routes.get("/comfyvr/{tail:.+}")
     async def cvr_static(request):
         tail = request.match_info["tail"]

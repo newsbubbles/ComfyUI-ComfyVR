@@ -138,10 +138,10 @@ Layouts write to `layouts/<source>__<name>.json` (endpoints in BOTH
 server modes; localStorage fallback in demo), debounced 1.2s after any
 move/add/delete, merged over the embedded layout at every load.
 Verified: open beyond the old 12-cap, move, close, reopen, placement
-identical. Remaining: a VR back-out gesture (Esc is desktop-only),
-then the J0 agent bridge (JARVIS.md). The hosted demo page (design
-below) rides whenever a gap opens. Widget coverage research (below)
-still open.
+identical. The VR back-out gesture shipped as the wrist watch (BACK
+OUT / EXIT VR / queue status on the left wrist). Remaining: the J0
+agent bridge (JARVIS.md). The hosted demo page (design below) rides
+whenever a gap opens. Widget coverage research (below) still open.
 
 ### Node search (research done 2026-08-28)
 
@@ -224,6 +224,30 @@ alpha blending. Plan:
 - **The demo**: scan your own room with a phone, drop the PLY into the
   space, materialize it on the gallery rim, and step inside it in VR.
   A captured place hanging inside the workflow universe.
+
+### Spike 4: text entry in VR (SHIPPED 2026-08-29, desktop verified)
+
+Text rows no longer bounce to the monitor in XR. Pinching a text field
+opens an in-space keyboard panel (new `keys` + `kbuf` row kinds in
+panels.js, per-key hover highlight via `setHotFrac`): number row, three
+letter rows, then shift / space / backspace / clear / cancel / OK, and
+a DICTATE button. Dictation records with MediaRecorder (webm/opus),
+POSTs to `LOCAL + '/stt'`, and both servers proxy that to a local
+whisper sidecar speaking the OpenAI audio API on 127.0.0.1:8765
+(override with COMFYVR_STT). Speakwright is the sidecar it was built
+against; both wav and webm/opus verified through the full TLS proxy
+chain. The sidecar binds localhost only, so the headset never needs a
+second origin or cert. Fail-soft: no sidecar means a readable flash
+and the keys keep working; closing the keyboard mid-recording drops
+the transcript; commit checks the target panel is not disposed. Mic
+permission is requested lazily on the first DICTATE tap (Quest pauses
+the immersive session for the dialog once). Desktop keeps the DOM
+editor; the keyboard is testable flat via `CVR.openKbd` / `CVR.kbdKey`.
+Same session: the wrist watch now billboards to the eyes per frame
+(`lookAt(camWorld)` in the tick, like core panels) instead of the
+fixed tilt, so it reads at any wrist angle. UNTESTED in-headset: key
+reachability at 6m spawn distance, dictation round-trip latency on
+Quest, watch readability while moving.
 
 ### Widget coverage research
 

@@ -114,6 +114,31 @@ def app_factory(backend: str) -> web.Application:
         (LAYOUTS / (key + ".json")).write_text(json.dumps(body), encoding="utf-8")
         return web.json_response({"saved": key})
 
+    async def stt_proxy(request):
+        """Forward dictated audio to a local whisper sidecar (speakwright).
+
+        The sidecar binds to 127.0.0.1 only; routing through here means the
+        headset never needs a second origin or a second certificate.
+        """
+        stt_backend = os.environ.get("COMFYVR_STT", "http://127.0.0.1:8765")
+        data = await request.read()
+        headers = {"Content-Type": request.headers.get("Content-Type", "")}
+        try:
+            async with request.app["http"].post(
+                stt_backend + "/v1/audio/transcriptions",
+                data=data,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as r:
+                body = await r.read()
+                ct = r.headers.get("Content-Type", "application/json")
+                return web.Response(status=r.status, body=body, headers={"Content-Type": ct})
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return web.json_response(
+                {"error": "voice sidecar not running (start speakwright on 127.0.0.1:8765)", "detail": str(e)},
+                status=502,
+            )
+
     async def proxy(request):
         """Forward /api/<path> to the backend as /<path>.
 
@@ -187,6 +212,7 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_post("/local/workflows/{name}", local_save)
     app.router.add_get("/local/layouts", layouts_all)
     app.router.add_post("/local/layouts/{key}", layout_save)
+    app.router.add_post("/local/stt", stt_proxy)
     app.router.add_get("/ws", ws_proxy)
     app.router.add_route("*", "/api/{path:.*}", proxy)
     app.router.add_static("/", PUBLIC)

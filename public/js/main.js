@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, sliderValue } from './panels.js';
+import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
@@ -796,6 +796,7 @@ function pickTargets() {
   }
   if (palette) out.push(palette.panel.mesh);
   if (browser) out.push(browser.panel.mesh);
+  if (kbd) out.push(kbd.panel.mesh);
   if (libraryPanel?.mesh) out.push(libraryPanel.mesh);
   if (wrist?.panel.mesh && renderer.xr.isPresenting) out.push(wrist.panel.mesh);
   return out;
@@ -857,6 +858,7 @@ function hover(e) {
   if (p && hit.rowInfo?.row && reachable(hit)) {
     if (p.hot !== hit.rowInfo.row) audio.tick();
     p.setHot(hit.rowInfo.row);
+    p.setHotFrac(hit.rowInfo.frac);
     hotPanel = p;
   } else if (p && hotPanel === p) {
     p.setHot(null);
@@ -864,7 +866,7 @@ function hover(e) {
 }
 
 function isInteractive(ri) {
-  return ri.row && ['slider', 'seed', 'combo', 'toggle', 'text', 'button'].includes(ri.kind);
+  return ri.row && ['slider', 'seed', 'combo', 'toggle', 'text', 'button', 'keys'].includes(ri.kind);
 }
 
 function onClick(e) {
@@ -938,6 +940,12 @@ function interact(panel, hub, ri) {
       audio.button();
       row.onClick?.(ri.frac);
       break;
+    case 'keys': {
+      const n = row.keys.length;
+      const i = Math.min(n - 1, Math.max(0, Math.floor((ri.frac ?? 0) * n)));
+      row.onKey?.(row.keys[i]);
+      break;
+    }
   }
 }
 
@@ -963,20 +971,20 @@ function applySliderFrac(panel, row, frac) {
   }
 }
 
-// ---------- text editor overlay (desktop affordance; VR uses phone later) ----------
+// ---------- text editor overlay (desktop) ----------
 const editorWrap = $('editor'), editorTa = $('editor-ta'), editorLabel = $('editor-label');
 let editorCtx = null;
 function editorOpen() { return editorWrap.style.display === 'flex'; }
 function openEditor(panel, row) {
+  // the DOM editor cannot render inside an immersive session; in XR the
+  // in-space keyboard takes over (pinch keys, or dictate through the mic)
+  if (renderer.xr.isPresenting) { openKbd(panel, row); return; }
   editorCtx = { panel, row };
   editorLabel.textContent = `${panel.title} · ${row.name}`;
   editorTa.value = String(row.get() ?? '');
   editorWrap.style.display = 'flex';
   editorTa.focus(); editorTa.select();
   audio.tick();
-  // the editor is DOM: it cannot render inside an immersive session, so
-  // tell the user in-space where it went instead of appearing dead
-  if (renderer.xr.isPresenting) panel.mesh?.userData?.hub?.flash('TEXT EDITOR IS ON THE MONITOR');
 }
 function closeEditor(commit) {
   if (commit && editorCtx) {
@@ -995,6 +1003,106 @@ editorTa.addEventListener('keydown', (e) => {
 });
 $('editor-ok').addEventListener('click', () => closeEditor(true));
 $('editor-cancel').addEventListener('click', () => closeEditor(false));
+
+// ---------- in-space keyboard: text entry that never leaves the headset ----------
+// Pinchable key rows for short fields, a mic key for prompts: dictation is
+// recorded in the browser and transcribed by a local whisper sidecar
+// (speakwright) through the server, so audio never leaves the machine.
+let kbd = null;
+const MIC_IDLE = '🎤 DICTATE';
+const KB_LETTER_ROWS = [
+  '1234567890'.split(''),
+  'qwertyuiop'.split(''),
+  "asdfghjkl'".split(''),
+  'zxcvbnm,.-'.split(''),
+];
+function openKbd(panel, row) {
+  closeKbd(false);
+  const micRow = buttonRow(MIC_IDLE, () => kbdMic(micRow));
+  const xform = (k) => (kbd?.caps ? k.toUpperCase() : k);
+  const rows = [
+    kbufRow(row.name, () => kbd?.buffer ?? ''),
+    ...KB_LETTER_ROWS.map(keys => keysRow(keys, kbdKey, { xform })),
+    keysRow(['⇧', 'SPACE', '⌫', 'CLEAR', '✕', 'OK'], kbdKey, { small: true }),
+    micRow,
+  ];
+  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.4, billboard: true });
+  // place where the head actually looks (XR lesson: cam.yaw is stale while
+  // presenting), a touch low so it reads like a tray under the node
+  const head = camera.getWorldPosition(new THREE.Vector3());
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  kp.placeFlat(scene, head.addScaledVector(dir, 6).add(new THREE.Vector3(0, -0.8, 0)));
+  kp.mesh.userData.palette = true;   // same always-reachable rule as the palette
+  kp.dirty();
+  kbd = { panel: kp, target: { panel, row }, buffer: String(row.get() ?? ''), caps: false, rec: null, micRow };
+  audio.accrete();
+}
+function closeKbd(commit) {
+  if (!kbd) return;
+  const { target, buffer, rec, panel } = kbd;
+  if (hotPanel === panel) hotPanel = null;
+  kbd = null;                       // null first: a pending rec.onstop drops its transcript
+  try { rec?.stop(); } catch (e) { /* already stopped */ }
+  panel.dispose();
+  if (commit && !target.panel.disposed) {
+    target.row.widget.value = buffer;
+    target.row.onChange?.();
+    target.panel.dirty();
+    audio.toggle(true);
+  }
+}
+function kbdKey(k) {
+  if (!kbd) return;
+  switch (k) {
+    case '⇧': kbd.caps = !kbd.caps; break;
+    case 'SPACE': kbd.buffer += ' '; break;
+    case '⌫': kbd.buffer = kbd.buffer.slice(0, -1); break;
+    case 'CLEAR': kbd.buffer = ''; break;
+    case '✕': closeKbd(false); return;
+    case 'OK': closeKbd(true); return;
+    default: kbd.buffer += kbd.caps ? k.toUpperCase() : k;
+  }
+  audio.tick();
+  kbd.panel.dirty();
+}
+async function kbdMic(micRow) {
+  if (!kbd) return;
+  if (kbd.rec) {                    // second tap: stop and transcribe
+    const rec = kbd.rec;
+    kbd.rec = null;
+    micRow.label = '… TRANSCRIBING';
+    kbd.panel.dirty();
+    rec.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!kbd) { stream.getTracks().forEach(t => t.stop()); return; }
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (!kbd) return;             // keyboard closed mid-recording: drop it
+      try {
+        const text = await client.stt(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+        if (kbd && text) kbd.buffer += (kbd.buffer && !/\s$/.test(kbd.buffer) ? ' ' : '') + text;
+      } catch (e) {
+        flashHint('dictation failed: ' + (e.message || e));
+      }
+      if (kbd) { micRow.label = MIC_IDLE; kbd.panel.dirty(); }
+    };
+    rec.start();
+    kbd.rec = rec;
+    micRow.label = '● LISTENING · TAP TO STOP';
+    kbd.panel.dirty();
+    audio.tick();
+  } catch (e) {
+    // most likely a denied or unanswered mic permission dialog
+    flashHint('mic unavailable: ' + (e.message || e));
+    audio.toggle(false);
+  }
+}
 
 // ---------- HUD ----------
 const statusChip = $('status'), hintEl = $('hint');
@@ -1316,10 +1424,10 @@ function attachWrist(grip) {
   }
   const mesh = wrist.panel.mesh || wrist.panel.placeFlat(grip, new THREE.Vector3());
   if (mesh.parent !== grip) grip.add(mesh);
-  // watch-face pose: above the wrist, tilted toward the eyes. First pass,
-  // angles get tuned from in-headset reports.
+  // watch-face pose: above the wrist; orientation is per-frame lookAt in the
+  // tick, so the face follows the eyes like every core panel
   mesh.position.set(0, 0.03, 0.1);
-  mesh.rotation.set(-1.0, 0, 0);
+  mesh.rotation.set(-1.0, 0, 0);   // first-frame pose only
   wrist.panel.foldAlpha = 1;
   wrist.panel.dirty();
 }
@@ -1396,8 +1504,7 @@ function xrSelectStart(st) {
       return;
     }
     if (isInteractive(ri)) {
-      if (ri.kind === 'text') return;   // text entry stays on desktop until the phone companion
-      interact(hit.panel, hit.hub, ri);
+      interact(hit.panel, hit.hub, ri);   // text rows open the in-space keyboard
       return;
     }
   }
@@ -1462,6 +1569,7 @@ function xrControllersTick() {
       if (hit.panel && hit.rowInfo?.row && hit.dist < 14) {
         if (hit.panel.hot !== hit.rowInfo.row) audio.tick();
         hit.panel.setHot(hit.rowInfo.row);
+        hit.panel.setHotFrac(hit.rowInfo.frac);
       }
     } else {
       st.rayLine.scale.z = 10;
@@ -1575,6 +1683,10 @@ function tick(dt) {
     browser.panel.mesh.lookAt(camWorld);
     browser.panel.update(t);
   }
+  if (kbd) {
+    kbd.panel.mesh.lookAt(camWorld);
+    kbd.panel.update(t);
+  }
   if (galleryCard) {
     galleryCard.mesh.lookAt(camWorld);
     galleryCard.update(t);
@@ -1585,7 +1697,12 @@ function tick(dt) {
     libraryPanel.mesh.scale.setScalar(Math.max(1, camWorld.distanceTo(libraryPanel.mesh.position) / 55));
     libraryPanel.update(t);
   }
-  if (wrist && renderer.xr.isPresenting) wrist.panel.update(t);
+  if (wrist && renderer.xr.isPresenting) {
+    // watch face billboards to the eyes like every core panel: readable at
+    // any wrist angle instead of only at the one tuned tilt
+    wrist.panel.mesh?.lookAt(camWorld);
+    wrist.panel.update(t);
+  }
 
   // occasional pulse along constellation threads
   spacePulseTimer -= dt;
@@ -1627,6 +1744,7 @@ window.CVR = {
   hubs, cam, beams, client, camera, THREE,
   openPalette, pal: () => palette,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
+  openKbd, kbd: () => kbd, kbdKey,
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },
