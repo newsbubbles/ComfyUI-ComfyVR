@@ -262,6 +262,32 @@ fixed tilt, so it reads at any wrist angle. UNTESTED in-headset: key
 reachability at 6m spawn distance, dictation round-trip latency on
 Quest, watch readability while moving.
 
+### VR asset generation (research 2026-08-29)
+
+Community ask: make VR assets from inside comfyvr. Landscape: the
+GENERATION side is heavily occupied and moving fast; write no
+generation nodes. ComfyUI v0.23.0 added a native GAUSSIAN type,
+splat manipulation nodes, and day-zero TripoSplat (image to gaussian
+splat, saves .spz and GLB; needs five model files including a DINOv3
+ViT-H encoder; VRAM unstated). Core also ships Hunyuan3D-v2 nodes
+(image to textured mesh; ALREADY present in the local install), and
+Hunyuan 3D 3.0 exists as cloud partner nodes. Best open mesh model:
+Microsoft TRELLIS 2 (Dec 2025, 4B, commercial ok) via wrappers.
+Apple LiTo (ICLR 2026) does single image to 3DGS, wrapper exists.
+
+The VACANT slot is the loop, not the model: prompt dictated in the
+headset, queued, and the pinched placard materializing as a walkable
+splat. Nothing surfaced doing generate-inside-VR; nearest neighbors
+are ComfyStereo (desktop OpenXR stereo viewing) and manual GLB
+export into WebXR projects. Comfyvr already has every piece: 3D
+outputs materialize from output dicts, .spz now routes to the right
+parser (bee890c), XR decimation keeps arrivals renderable, and the
+keyboard/dictation closes the input side. Path: update ComfyUI to
+v0.23+, test TripoSplat VRAM on the 1080 (fallbacks: Hunyuan3D-v2
+mini locally, partner/API nodes for zero VRAM), then ship a
+make-vr-asset sample workflow (remember the gitignore whitelist
+needs each new sample named) and demo the loop.
+
 ### Widget coverage research
 
 Inventory `/object_info` widget and input types across popular node
