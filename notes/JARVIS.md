@@ -112,6 +112,33 @@ kind)` runs a blessed asset workflow and lets the normal output path
 land the placard in the gallery. Anything that bills an external API
 routes through `ask()` first; local GPU runs do not.
 
+## Voice and manner (the holodeck register)
+
+The reddit read is consistent: people see JARVIS and the holodeck.
+Both of those computers share one property that no chat assistant
+has: they are LACONIC. The agent's interchanges are deliberately not
+what a chat model gives you by default. The register:
+
+- Answer first, never preamble. No "Sure!", no "Great question", no
+  restating the ask, no "I have successfully". A typical utterance is
+  under a dozen words: "Queued. Two ahead of it." "Steps is 30.
+  Want higher?" "The upscaler failed: missing model. Pick another?"
+- Numbers are rounded for the ear. "About twenty seconds", never
+  "19.3 seconds".
+- Silence is the default state. When the action is visible (a slider
+  moving, a wire glowing) the agent does not narrate it. It speaks to
+  answer, warn, or hand back a decision.
+- Errors: name the node, one cause, one fix. Nothing else.
+- Permission requests are yes/no sized, through ask().
+
+Enforcement is TOOLS, not prompt hope (the prose-is-a-weak-control-
+surface rule): `say()` hard-rejects text over ~220 characters with an
+error telling the agent to put the detail on a note panel instead;
+the TTS path already strips markdown (speakwright's ear-readiness);
+the system prompt sets tone but the caps carry the behavior. The
+model behind it stays cheap and open via OpenRouter; a laconic
+register is exactly what small models do well.
+
 ## Voice contract
 
 - Push-to-talk, never hot mic. Candidates: an AGENT key on the wrist
@@ -134,7 +161,7 @@ routes through `ask()` first; local GPU runs do not.
   to gaussian splat, saved as .spz, which comfyvr now routes to the
   right parser) and Hunyuan3D-v2 mesh nodes are already in the local
   install. `generate_asset(kind=object)` is a blessed workflow away.
-- **Areas** are honestly not solved by anyone as walkable generative
+- **Areas** are not solved by anyone as walkable generative
   geometry. Today the real path for a walkable place is a phone-
   scanned splat. The tasteful middle step: a `generate_sky` tool
   running a 360 panorama workflow whose output becomes the void's

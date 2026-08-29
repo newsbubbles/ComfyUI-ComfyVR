@@ -19,6 +19,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 import aiohttp
@@ -44,6 +45,8 @@ async def nocache_mw(request, handler):
 def app_factory(backend: str) -> web.Application:
     app = web.Application(client_max_size=64 * 1024 * 1024, middlewares=[nocache_mw])
     app["backend"] = backend.rstrip("/")
+    app["agent_exec"] = None
+    app["agent_pending"] = {}
 
     async def on_startup(app):
         app["http"] = aiohttp.ClientSession()
@@ -139,6 +142,74 @@ def app_factory(backend: str) -> web.Application:
                 status=502,
             )
 
+    async def tts_proxy(request):
+        """Forward text to the local voice sidecar's speech endpoint."""
+        stt_backend = os.environ.get("COMFYVR_STT", "http://127.0.0.1:8765")
+        body = await request.read()
+        try:
+            async with request.app["http"].post(
+                stt_backend + "/v1/audio/speech",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as r:
+                out = await r.read()
+                ct = r.headers.get("Content-Type", "audio/wav")
+                return web.Response(status=r.status, body=out, headers={"Content-Type": ct})
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return web.json_response(
+                {"error": "voice sidecar not running (start speakwright on 127.0.0.1:8765)", "detail": str(e)},
+                status=502,
+            )
+
+    # ---- agent bridge: tools ride a websocket INTO the live page ----------
+    # The space is the source of truth for spatial state, so tool calls are
+    # answered by the page itself: an agent POSTs /local/agent/call, the
+    # server relays over the executor websocket, the page runs the tool and
+    # replies. One page per server instance; last connected wins.
+
+    async def agent_ws(request):
+        ws = web.WebSocketResponse(heartbeat=25)
+        await ws.prepare(request)
+        request.app["agent_exec"] = ws
+        try:
+            async for msg in ws:
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                try:
+                    d = json.loads(msg.data)
+                except ValueError:
+                    continue
+                fut = request.app["agent_pending"].pop(d.get("id"), None)
+                if fut is not None and not fut.done():
+                    fut.set_result(d)
+        finally:
+            if request.app.get("agent_exec") is ws:
+                request.app["agent_exec"] = None
+        return ws
+
+    async def agent_call(request):
+        # tool calls come only from this machine (the harness), never the LAN
+        if request.remote not in ("127.0.0.1", "::1"):
+            raise web.HTTPForbidden(text="agent calls are loopback-only")
+        ws = request.app.get("agent_exec")
+        if ws is None or ws.closed:
+            return web.json_response({"ok": False, "error": "no space connected (open the page first)"}, status=503)
+        body = await request.json()
+        cid = uuid.uuid4().hex
+        fut = asyncio.get_event_loop().create_future()
+        request.app["agent_pending"][cid] = fut
+        try:
+            await ws.send_str(json.dumps({"id": cid, "tool": body.get("tool"), "args": body.get("args") or {}}))
+            d = await asyncio.wait_for(fut, 30)
+        except asyncio.TimeoutError:
+            return web.json_response({"ok": False, "error": "space did not answer in 30s"}, status=504)
+        except (aiohttp.ClientError, ConnectionResetError) as e:
+            return web.json_response({"ok": False, "error": f"space link dropped: {e}"}, status=502)
+        finally:
+            request.app["agent_pending"].pop(cid, None)
+        return web.json_response(d)
+
     async def proxy(request):
         """Forward /api/<path> to the backend as /<path>.
 
@@ -213,6 +284,9 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_get("/local/layouts", layouts_all)
     app.router.add_post("/local/layouts/{key}", layout_save)
     app.router.add_post("/local/stt", stt_proxy)
+    app.router.add_post("/local/tts", tts_proxy)
+    app.router.add_get("/local/agent", agent_ws)
+    app.router.add_post("/local/agent/call", agent_call)
     app.router.add_get("/ws", ws_proxy)
     app.router.add_route("*", "/api/{path:.*}", proxy)
     app.router.add_static("/", PUBLIC)

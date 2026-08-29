@@ -96,6 +96,77 @@ try:
             json.dump(body, fh)
         return web.json_response({"saved": key})
 
+    # Agent bridge (J0): tool calls ride a websocket into the live page.
+    # Same protocol as server.py; calls are loopback-only.
+    _AGENT = {"ws": None, "pending": {}}
+
+    @routes.get("/comfyvr/local/agent")
+    async def cvr_agent_ws(request):
+        from aiohttp import WSMsgType
+        ws = web.WebSocketResponse(heartbeat=25)
+        await ws.prepare(request)
+        _AGENT["ws"] = ws
+        try:
+            async for msg in ws:
+                if msg.type != WSMsgType.TEXT:
+                    continue
+                try:
+                    d = json.loads(msg.data)
+                except ValueError:
+                    continue
+                fut = _AGENT["pending"].pop(d.get("id"), None)
+                if fut is not None and not fut.done():
+                    fut.set_result(d)
+        finally:
+            if _AGENT["ws"] is ws:
+                _AGENT["ws"] = None
+        return ws
+
+    @routes.post("/comfyvr/local/agent/call")
+    async def cvr_agent_call(request):
+        import asyncio as _aio
+        import uuid as _uuid
+        if request.remote not in ("127.0.0.1", "::1"):
+            raise web.HTTPForbidden(text="agent calls are loopback-only")
+        ws = _AGENT["ws"]
+        if ws is None or ws.closed:
+            return web.json_response({"ok": False, "error": "no space connected (open /comfyvr/ first)"}, status=503)
+        body = await request.json()
+        cid = _uuid.uuid4().hex
+        fut = _aio.get_event_loop().create_future()
+        _AGENT["pending"][cid] = fut
+        try:
+            await ws.send_str(json.dumps({"id": cid, "tool": body.get("tool"), "args": body.get("args") or {}}))
+            d = await _aio.wait_for(fut, 30)
+        except _aio.TimeoutError:
+            return web.json_response({"ok": False, "error": "space did not answer in 30s"}, status=504)
+        finally:
+            _AGENT["pending"].pop(cid, None)
+        return web.json_response(d)
+
+    # Voice: forward text to the local sidecar's speech endpoint.
+    @routes.post("/comfyvr/local/tts")
+    async def cvr_tts(request):
+        import aiohttp
+        stt_backend = os.environ.get("COMFYVR_STT", "http://127.0.0.1:8765")
+        body = await request.read()
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    stt_backend + "/v1/audio/speech",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as r:
+                    out = await r.read()
+                    ct = r.headers.get("Content-Type", "audio/wav")
+                    return web.Response(status=r.status, body=out, headers={"Content-Type": ct})
+        except Exception as e:
+            return web.json_response(
+                {"error": "voice sidecar not running (start speakwright on 127.0.0.1:8765)", "detail": str(e)},
+                status=502,
+            )
+
     # Dictation: forward audio to a local whisper sidecar (speakwright),
     # so the headset only ever talks to this origin.
     @routes.post("/comfyvr/local/stt")

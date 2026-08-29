@@ -9,6 +9,7 @@ import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
 import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
+import { initAgent } from './agent.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -1281,6 +1282,16 @@ async function boot() {
 
   backfillHistory().catch((e) => console.warn('history backfill', e));
   recallShowcase().catch((e) => console.warn('showcase recall', e));
+
+  // J0 agent bridge: the page answers tool calls relayed by the server
+  initAgent({
+    hubs: () => hubs,
+    wfIndex: () => wfIndex,
+    client,
+    openWorkflow,
+    flashHint,
+    audio,
+  });
 }
 
 // cvr_demo_* files in the output dir become assets on the first hub, so

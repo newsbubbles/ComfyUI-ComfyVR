@@ -138,3 +138,26 @@ a stack of rows. Candidate primitives, roughly from cheap to wild:
 Rule of thumb worth testing: text is for search, shape is for recognition,
 place is for memory. A browser you visit twice should let you find the
 thing by remembering WHERE it was.
+
+## Groups (design 2026-08-30)
+
+ComfyUI groups are named colored boxes in the 2D canvas: the workflow
+JSON carries `groups: [{title, bounding, color}]` and membership is
+GEOMETRIC, a node belongs to whichever box contains its 2D position.
+The 2D positions survive in the raw JSON even though the amphitheater
+derives its own layout, so membership is computable at parse time.
+
+Representation: a group becomes an angular WEDGE of the amphitheater.
+Members cluster within a contiguous arc across their depth rings, the
+wedge gets a faint colored band arcing along the rim in the group's
+own color, and the title floats at the band's crown as a small glyph
+panel. This is "place is for memory" applied: the group gives its
+nodes a shared place, exactly what boxes do in 2D, without stealing
+the panel accent (which stays link-type, the DAG rainbow).
+
+Mechanics, when built: parse computes group membership from bounding
+boxes; layout adds a group term so members attract into a shared
+angular sector (overrides still win); the band and title render per
+group; and the agent's `arrange(hub, 'groups')` uses the same term.
+Groups are also the natural unit for the agent to talk about: "the
+upscale group is erroring" beats naming four nodes.
