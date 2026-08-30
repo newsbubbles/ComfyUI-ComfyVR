@@ -184,6 +184,35 @@ All three land files in the output directory, which means the
 existing placard-materialize loop and the XR decimator handle
 delivery with zero new rendering work.
 
+## Harness and memory (decided 2026-08-30)
+
+Where the agent LIVES: yes, the python side. The split:
+
+- **The page is the executor, never the brain.** It answers tools and
+  queues utterances; it holds no conversation state and runs no model.
+- **The server owns persistence.** Agent conversations get a sqlite
+  store (`agent.db`: sessions, turns, tool calls) written by the
+  server, so any harness can resume a session with full history and
+  the transcript survives page reloads and headset naps.
+- **Harnesses are guests, not forks.** The Claude Agent SDK and the
+  Codex SDK both allow building a full custom harness; we deliberately
+  stop short of that. ComfyVR ships a skill
+  (`.claude/skills/comfyvr/SKILL.md`: bridge protocol, tool table, the
+  register, hard rules) so the user's OWN Claude Code or Codex drives
+  the space with their existing subscription, credentials untouched,
+  in their normal environment. What happens in comfyvr is still kept
+  separate: the sqlite transcript is ours, keyed by comfyvr session,
+  not theirs.
+- **The embedded J1 agent is just the bundled default harness**: a
+  small PydanticAI process over OpenRouter for people who do not run
+  a CLI agent, reading the same skill text as its system prompt and
+  writing the same sqlite store. One brain contract, N brains.
+
+The listen() tool closes the voice loop for ANY harness today: wrist
+push-to-talk queues the transcript, the harness polls listen between
+actions, answers through say(). Talking to Claude Code from inside
+the headset needs no new code, only a running session with the skill.
+
 ## Phases
 
 - **J0, drive the space from outside.** Agent bridge websocket +

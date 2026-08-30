@@ -288,6 +288,33 @@ mini locally, partner/API nodes for zero VRAM), then ship a
 make-vr-asset sample workflow (remember the gitignore whitelist
 needs each new sample named) and demo the loop.
 
+### Next spike: workflow from scratch (spec 2026-08-30)
+
+The biggest remaining limitations-list item. The pieces:
+
+1. **NEW WORKFLOW on the wrist** (and in the library panel for
+   desktop): creates an empty graph `{nodes: [], links: []}`, places a
+   fresh hub in the widest horizon gap, and opens the in-space
+   keyboard to name it (the keyboard is why this is now possible).
+2. **Palette from nothing.** The add-node palette currently opens only
+   from link drags. An empty hub's core panel gets an ADD NODE button
+   opening the palette in category mode with no type filter; the first
+   node lands on ring zero. After that, growth is the existing pull
+   system in both directions.
+3. **Save path** already exists (SAVE writes local copies). New
+   workflows are `source: 'local'` from birth, so nothing touches
+   userdata.
+4. Template seeding (start from portrait-sdxl instead of empty) rides
+   the same NEW flow with a picker row; do empty first.
+
+Also shipped 2026-08-30: VISIBLE HANDS (25 tracked joints per hand
+render as glowing spheres, sized by the runtime's joint radii; fixes
+"nobody can see hands" from the session video), wrist PUSH-TO-TALK
+(🎤 AGENT row records, transcribes through /local/stt, queues the
+transcript for the harness), and the agent listen() tool that drains
+those utterances, closing the voice loop for any harness. The agent
+skill ships in .claude/skills/comfyvr/SKILL.md.
+
 ### Widget coverage research
 
 Inventory `/object_info` widget and input types across popular node

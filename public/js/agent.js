@@ -11,6 +11,10 @@ const SAY_MAX = 220;
 export function initAgent(ctx) {
   const { hubs, wfIndex, client, openWorkflow, flashHint, audio } = ctx;
 
+  // push-to-talk utterances queue here until the harness drains them with
+  // listen(); the page never interprets speech, it only carries it
+  const heard = [];
+
   function findHub(name) {
     if (!name) {
       const open = hubs();
@@ -136,6 +140,8 @@ export function initAgent(ctx) {
       return { node: n.title, widget, value: v, folded: !p };
     },
 
+    listen: () => heard.splice(0, heard.length),
+
     say: async ({ text }) => {
       const t = String(text || '').trim();
       if (!t) throw new Error('nothing to say');
@@ -183,4 +189,8 @@ export function initAgent(ctx) {
     ws.onerror = () => {};
   }
   connect();
+
+  return {
+    hear: (text) => { heard.push({ at: new Date().toISOString(), text: String(text) }); },
+  };
 }

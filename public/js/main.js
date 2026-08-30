@@ -1193,6 +1193,7 @@ function setStatus() {
 
 // ---------- boot ----------
 let SCHEMA = {};
+let agentApi = null;
 
 function hubOpts() {
   return {
@@ -1284,7 +1285,7 @@ async function boot() {
   recallShowcase().catch((e) => console.warn('showcase recall', e));
 
   // J0 agent bridge: the page answers tool calls relayed by the server
-  initAgent({
+  agentApi = initAgent({
     hubs: () => hubs,
     wfIndex: () => wfIndex,
     client,
@@ -1448,6 +1449,46 @@ async function accreteHub(name, json, bitmap) {
 // pinch as select events on the same input sources, so every interaction
 // below works with bare hands for free.
 const xrState = { yaw: 0, turnLatch: false, controllers: [] };
+
+// ---------- visible hands: joint poses rendered as constellation-matter ----------
+// The runtime tracks 25 joints per hand but composites nothing; unrendered
+// hands read as "no hand tracking" on video. Glowing joint spheres, sized by
+// the runtime's own joint radii, make the hands part of the aesthetic.
+const handViz = [];
+{
+  const geo = new THREE.SphereGeometry(1, 6, 6);
+  for (let hi = 0; hi < 2; hi++) {
+    const hand = renderer.xr.getHand(hi);
+    rig.add(hand);
+    const inst = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({
+      color: 0x7ce8dc, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    }), 25);
+    inst.frustumCulled = false;
+    inst.renderOrder = 25;
+    inst.visible = false;
+    scene.add(inst);
+    handViz.push({ hand, inst });
+  }
+}
+const _hm = new THREE.Matrix4(), _hp = new THREE.Vector3();
+function updateHands() {
+  for (const { hand, inst } of handViz) {
+    let n = 0;
+    const joints = hand.joints || {};
+    for (const name in joints) {
+      const j = joints[name];
+      if (!j.visible) continue;
+      j.getWorldPosition(_hp);
+      const r = (j.jointRadius || 0.008) * (name.endsWith('-tip') ? 1.35 : 1);
+      _hm.makeScale(r, r, r).setPosition(_hp);
+      inst.setMatrixAt(n++, _hm);
+    }
+    inst.count = n;
+    inst.visible = n > 0 && renderer.xr.isPresenting;
+    if (n) inst.instanceMatrix.needsUpdate = true;
+  }
+}
 const _mat4 = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -1492,11 +1533,49 @@ renderer.xr.addEventListener('sessionend', () => {
 // The system escape (palm up, pinch the floating logo) is hidden knowledge;
 // a watch on the left wrist is not. Also the only HUD visible inside XR.
 let wrist = null;
+const AGENT_MIC_IDLE = '🎤 AGENT';
+let wristRec = null;
+async function wristMic(row) {
+  if (wristRec) {                     // second tap: stop, transcribe, queue for the harness
+    const rec = wristRec;
+    wristRec = null;
+    row.label = '… SENDING';
+    wrist?.panel.dirty();
+    rec.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      stream.getTracks().forEach(tr => tr.stop());
+      try {
+        const text = await client.stt(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }));
+        if (text) { agentApi?.hear(text); flashHint('🎤 ' + text); audio.toggle(true); }
+      } catch (e) {
+        flashHint('agent mic failed: ' + (e.message || e));
+      }
+      row.label = AGENT_MIC_IDLE;
+      wrist?.panel.dirty();
+    };
+    rec.start();
+    wristRec = rec;
+    row.label = '● LISTENING · TAP TO SEND';
+    wrist.panel.dirty();
+    audio.tick();
+  } catch (e) {
+    flashHint('mic unavailable: ' + (e.message || e));
+  }
+}
 function attachWrist(grip) {
   if (!wrist) {
+    const micRow = buttonRow(AGENT_MIC_IDLE, () => wristMic(micRow));
     const rows = [
       readoutRow(() => (client.mode === 'live' ? '● LIVE' : '◌ DEMO'),
                  () => (client.queueRemaining ? '◈ ' + client.queueRemaining + ' queued' : '')),
+      micRow,
       buttonRow('⌸ WORKFLOWS', () => openBrowser()),
       buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
@@ -1789,6 +1868,7 @@ function tick(dt) {
     wrist.panel.mesh?.lookAt(camWorld);
     wrist.panel.update(t);
   }
+  if (renderer.xr.isPresenting) updateHands();
 
   // occasional pulse along constellation threads
   spacePulseTimer -= dt;
@@ -1831,6 +1911,7 @@ window.CVR = {
   openPalette, pal: () => palette,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openKbd, kbd: () => kbd, kbdKey,
+  hear: (t) => agentApi?.hear(t),
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },

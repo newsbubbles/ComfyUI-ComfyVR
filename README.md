@@ -164,7 +164,9 @@ app to narrate. Recordings land in `/sdcard/Oculus/VideoShots`.
 Pinch works because Quest fires the same select events for hand tracking
 as for triggers, so every interaction is hand-native for free,
 including the keyboard: pinch a text field and it appears in front of
-you. For anything longer than a few words, tap DICTATE and talk.
+you. For anything longer than a few words, tap DICTATE and talk. Your
+hands render as constellations of glowing joints, so they are visible
+to you and in recordings.
 
 ## Contributing
 
@@ -212,17 +214,25 @@ What does not work yet, so you know before you fly:
 The goal: the most natural place to run, tend, and remix generative
 workflows, on a screen or standing inside them. In rough order:
 
-- Creating workflows: start an empty one from a template, grow it node
-  by node, save it.
-- Semantic node search over node descriptions (fuzzy matching and
-  pinchable category browsing are already in).
+- Creating workflows: start an empty one from the wrist, grow it node
+  by node, name it with the in-space keyboard, save it.
+- The agent: an in-space voice you talk to over push-to-talk that
+  reads, edits, and queues workflows for you. The bridge and tools
+  are in; the wrist mic is in; harnesses plug in over the bridge.
+- Generating VR assets in VR: dictate a prompt, queue an image-to-3D
+  workflow, pinch the placard, walk around the result. The delivery
+  loop already works; blessed workflows are next.
+- Groups rendered as amphitheater wedges, so a workflow's own
+  organization survives into space.
 - Image upload from inside the headset. The browser file picker on
-  Quest reaches headset storage, including your screenshots and
-  downloads, so feeding a LoadImage node from the headset gallery is a
-  real path.
+  Quest reaches headset storage, so feeding a LoadImage node from the
+  headset gallery is a real path.
 - A hosted demo you can fly with zero install.
 - Gallery recall across restarts, from the output folder itself.
-- Voice: "load my portrait workflow."
-- Presence: two people in the same constellation.
+- Presence: friends in your constellation over a private network,
+  watching the same pulses climb the same wires.
+- The far pile, in no order: node packs that act inside the 3D
+  environment itself, 4D (animated) splats, physics for the things
+  you generate, semantic node search.
 
 Built with three.js. Not affiliated with Comfy Org.

@@ -139,6 +139,30 @@ Rule of thumb worth testing: text is for search, shape is for recognition,
 place is for memory. A browser you visit twice should let you find the
 thing by remembering WHERE it was.
 
+## Field feedback worth keeping (r/StableDiffusion, 2026-08-30)
+
+"Play Half-Life: Alyx, try Gravity Sketch, avoid transparent tabs."
+Taken seriously:
+
+- **Alyx** is the benchmark for direct manipulation with WEIGHT: things
+  respond to grabs with presence, two-handed actions feel physical.
+  Our grabs are ray-pinches; worth studying where closeness should
+  switch to direct touch (a panel within arm's reach could be pressed,
+  not rayed).
+- **Gravity Sketch** is the benchmark for creation UX in VR: the
+  non-dominant hand carries the tool palette, radial menus bloom from
+  the wrist, two hands scale and rotate the world. We are already
+  drifting toward its wrist-as-toolbelt (watch, keyboard, push-to-
+  talk); lean in deliberately rather than by accident.
+- **Transparent tabs**: additive glass panels lose legibility against
+  busy backgrounds. Candidate fixes, in order of cheapness: raise
+  glass opacity while a panel is docked for reading; a "solid" reading
+  mode per panel; dim the world behind a docked panel (vignette).
+  Legibility is a comfort feature, not a style choice.
+
+The "additional dimension and complexity" comment reads as intended:
+complexity is the material here, the job is making it legible.
+
 ## Groups (design 2026-08-30)
 
 ComfyUI groups are named colored boxes in the 2D canvas: the workflow
