@@ -82,8 +82,8 @@ backend at all so you can explore the space cold.
   VR opens a floating keyboard with a real cursor: pinch anywhere in
   the text to put the caret there, arrow keys to nudge it, and typing,
   backspace, and dictation all happen at the caret. A SYM layer covers
-  prompt syntax (parentheses, brackets, pipes, weights), and the
-  DICTATE key records your voice and types the transcription. Dictation
+  prompt syntax (parentheses, brackets, pipes, weights), and the mic
+  key records your voice and types the transcription. Dictation
   uses a local whisper sidecar on your PC (anything speaking the
   OpenAI audio API on 127.0.0.1:8765), so audio never leaves your
   machine. The first tap asks for mic permission once. On desktop,
@@ -175,9 +175,9 @@ app to narrate. Recordings land in `/sdcard/Oculus/VideoShots`.
 Pinch works because Quest fires the same select events for hand tracking
 as for triggers, so every interaction is hand-native for free,
 including the keyboard: pinch a text field and it appears in front of
-you. For anything longer than a few words, tap DICTATE and talk. Your
-hands render as constellations of glowing joints, so they are visible
-to you and in recordings.
+you. For anything longer than a few words, tap the mic key and talk.
+Your hands render as constellations of glowing joints, so they are
+visible to you and in recordings.
 
 ## Contributing
 
@@ -199,7 +199,7 @@ you can patch it.
 What does not work yet, so you know before you fly:
 
 - **Dictation needs a helper on the PC.** The in-space keyboard always
-  works, but the DICTATE key needs a local transcription server
+  works, but the mic keys need a local transcription server
   speaking the OpenAI audio API on 127.0.0.1:8765 (any faster-whisper
   wrapper does). Without one it says so, and the keys keep working.
   Point COMFYVR_STT elsewhere if your sidecar lives on another port.

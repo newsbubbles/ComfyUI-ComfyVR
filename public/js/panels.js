@@ -417,19 +417,22 @@ export class Panel {
         g.textAlign = 'left'; break;
       }
       case 'keys': {
-        // one row of the in-space keyboard: uniform cells, the hovered cell
-        // lit so a shaky VR ray always shows which key it would hit
-        const n = r.keys.length, cw = (W - 2 * PAD) / n;
-        const hotIdx = hot && this.hotFrac != null
-          ? Math.min(n - 1, Math.max(0, Math.floor(this.hotFrac * n))) : -1;
+        // one row of the in-space keyboard: weighted cells (a spacebar is a
+        // wide key), the hovered cell lit so a shaky VR ray always shows
+        // which key it would hit
+        const n = r.keys.length;
+        const total = r.w ? r.w.reduce((a, b) => a + b, 0) : n;
+        const hotIdx = hot && this.hotFrac != null ? keyIndexAt(r, this.hotFrac) : -1;
         g.font = FONT(r.small ? 13 : 18, true); g.textAlign = 'center';
+        let x = PAD;
         r.keys.forEach((k, i) => {
-          const x = PAD + i * cw;
+          const cw = (W - 2 * PAD) * (r.w ? r.w[i] : 1) / total;
           if (i === hotIdx) { g.fillStyle = withAlpha(A, 0.28); roundRect(g, x + 2, y + 5, cw - 4, h - 10, 6); g.fill(); }
           g.strokeStyle = withAlpha(A, i === hotIdx ? 1 : 0.4); g.lineWidth = i === hotIdx ? 2.5 : 1.25;
           roundRect(g, x + 2, y + 5, cw - 4, h - 10, 6); g.stroke();
           g.fillStyle = i === hotIdx ? '#e8fffb' : withAlpha(A, 0.85);
           g.fillText(r.xform ? r.xform(k) : k, x + cw / 2, mid);
+          x += cw;
         });
         g.textAlign = 'left';
         break;
@@ -475,8 +478,7 @@ export class Panel {
   // changes, so sweeping a ray across the keyboard stays cheap.
   setHotFrac(frac) {
     if (this.hot?.kind !== 'keys') { this.hotFrac = null; return; }
-    const n = this.hot.keys.length;
-    const idx = Math.min(n - 1, Math.max(0, Math.floor((frac ?? 0) * n)));
+    const idx = keyIndexAt(this.hot, frac);
     this.hotFrac = frac;
     if (this._hotKeyIdx !== idx) { this._hotKeyIdx = idx; this.dirty(); }
   }
@@ -542,6 +544,17 @@ export function readoutRow(get, get2) { return { kind: 'readout', get, get2 }; }
 export function alertRow(get) { return { kind: 'alert', get }; }
 export function glyphRow(text, big = false) { return { kind: 'glyphs', text, big }; }
 export function keysRow(keys, onKey, opts = {}) { return { kind: 'keys', keys, onKey, ...opts }; }
+// Weighted key cells: row.w gives each key a width factor (a spacebar is a
+// wide key, not a wide button). One mapping shared by draw, hover, and input.
+export function keyIndexAt(row, frac) {
+  const n = row.keys.length;
+  if (!row.w) return Math.min(n - 1, Math.max(0, Math.floor((frac ?? 0) * n)));
+  const total = row.w.reduce((a, b) => a + b, 0);
+  const f = Math.max(0, Math.min(0.9999, frac ?? 0)) * total;
+  let acc = 0;
+  for (let i = 0; i < n; i++) { acc += row.w[i]; if (f < acc) return i; }
+  return n - 1;
+}
 export function kbufRow(name, get, lines = 3) { return { kind: 'kbuf', name, get, lines }; }
 
 // ------- small helpers -------

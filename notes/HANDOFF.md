@@ -315,6 +315,19 @@ transcript for the harness), and the agent listen() tool that drains
 those utterances, closing the voice loop for any harness. The agent
 skill ships in .claude/skills/comfyvr/SKILL.md.
 
+### Thread-mined ideas (r/StableDiffusion, 2026-08-30, 74 up / 18K views)
+
+- **Avatar creation workflow that plugs into VRChat** (u/Super_Range45):
+  a blessed workflow whose output is a rigged avatar. Pairs with the
+  asset-gen track; VRChat export is a real distribution wedge.
+- **Prompt autocomplete**: a small local model suggesting completions
+  above the in-space keyboard while typing. Keyboard now has room for
+  a suggestion strip row.
+- **"Jarvis, add a node for a lora and set it to surprise me"**
+  (u/ImWinwin): verbatim agent demo script material.
+- **Valve Index tester incoming** (u/Enshitification): PCVR path is
+  documented but untested by us; their report will be the first.
+
 ### Widget coverage research
 
 Inventory `/object_info` widget and input types across popular node

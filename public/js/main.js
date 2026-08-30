@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, sliderValue } from './panels.js';
+import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
@@ -958,9 +958,7 @@ function interact(panel, hub, ri) {
       row.onClick?.(ri.frac);
       break;
     case 'keys': {
-      const n = row.keys.length;
-      const i = Math.min(n - 1, Math.max(0, Math.floor((ri.frac ?? 0) * n)));
-      row.onKey?.(row.keys[i]);
+      row.onKey?.(row.keys[keyIndexAt(row, ri.frac)]);
       break;
     }
     case 'kbuf': {
@@ -1044,7 +1042,6 @@ $('editor-cancel').addEventListener('click', () => closeEditor(false));
 // recorded in the browser and transcribed by a local whisper sidecar
 // (speakwright) through the server, so audio never leaves the machine.
 let kbd = null;
-const MIC_IDLE = '🎤 DICTATE';
 const KB_LETTER_ROWS = [
   'qwertyuiop'.split(''),
   "asdfghjkl'".split(''),
@@ -1056,23 +1053,23 @@ const KB_SYM_ROWS = [
   ',.|_-+=/\\*'.split(''),
   '\'"!?@#%&~^'.split(''),
 ];
-function kbBottomKeys(sym) { return ['✕', 'CLEAR', '⇧', sym ? 'ABC' : 'SYM', '◂', '▸', 'SPACE', '⌫', 'OK']; }
+// bottom row shaped like a keyboard's: a real spacebar, the mic as a key
+function kbBottomKeys(sym, mic = '🎤') { return ['✕', '⇧', sym ? 'ABC' : 'SYM', '◂', 'SPACE', '▸', mic, '⌫', 'OK']; }
+const KB_BOTTOM_W = [0.9, 1, 1.1, 0.7, 2.6, 0.7, 1, 1, 1.2];
 function openKbd(panel, row) {
   closeKbd(false);
-  const micRow = buttonRow(MIC_IDLE, () => kbdMic(micRow));
   const xform = (k) => (kbd?.caps ? k.toUpperCase() : k);
   const gridRows = KB_LETTER_ROWS.map(keys => keysRow(keys.slice(), kbdKey, { xform }));
-  const bottomRow = keysRow(kbBottomKeys(false), kbdKey, { small: true });
-  const bufRow = kbufRow(row.name, () => kbd?.buffer ?? '', row.oneline ? 2 : 6);
+  const bottomRow = keysRow(kbBottomKeys(false), kbdKey, { small: true, w: KB_BOTTOM_W });
+  const bufRow = kbufRow(row.name, () => kbd?.buffer ?? '', row.oneline ? 2 : 4);
   bufRow.caret = () => kbd?.caret ?? 0;
   const rows = [
     bufRow,
     keysRow('1234567890'.split(''), kbdKey),
     ...gridRows,
     bottomRow,
-    micRow,
   ];
-  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.4, billboard: true });
+  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.8, billboard: true });
   // place where the head actually looks (XR lesson: cam.yaw is stale while
   // presenting), a touch low so it reads like a tray under the node
   const head = camera.getWorldPosition(new THREE.Vector3());
@@ -1081,14 +1078,19 @@ function openKbd(panel, row) {
   kp.mesh.userData.palette = true;   // same always-reachable rule as the palette
   kp.dirty();
   const buffer = String(row.get() ?? '');
-  kbd = { panel: kp, target: { panel, row }, buffer, caret: buffer.length, caps: false, sym: false, rec: null, micRow, gridRows, bottomRow, bufRow };
+  kbd = { panel: kp, target: { panel, row }, buffer, caret: buffer.length, caps: false, sym: false, rec: null, micLabel: '🎤', gridRows, bottomRow, bufRow };
   audio.accrete();
 }
 function kbdSetSym(sym) {
   kbd.sym = sym;
   const src = sym ? KB_SYM_ROWS : KB_LETTER_ROWS;
   kbd.gridRows.forEach((row, i) => { row.keys = src[i].slice(); });
-  kbd.bottomRow.keys = kbBottomKeys(sym);
+  kbd.bottomRow.keys = kbBottomKeys(sym, kbd.micLabel);
+  kbd.panel.dirty();
+}
+function kbdSetMic(label) {
+  kbd.micLabel = label;
+  kbd.bottomRow.keys = kbBottomKeys(kbd.sym, label);
   kbd.panel.dirty();
 }
 function kbdInsert(txt) {
@@ -1125,7 +1127,8 @@ function kbdKey(k) {
         kbd.caret--;
       }
       break;
-    case 'CLEAR': kbd.buffer = ''; kbd.caret = 0; break;
+    case '🎤': case '●': kbdMic(); return;
+    case '…': return;   // transcription in flight; the key answers when done
     case '✕': closeKbd(false); return;
     case 'OK': closeKbd(true); return;
     default: kbdInsert(kbd.caps ? k.toUpperCase() : k);
@@ -1133,13 +1136,12 @@ function kbdKey(k) {
   audio.tick();
   kbd.panel.dirty();
 }
-async function kbdMic(micRow) {
+async function kbdMic() {
   if (!kbd) return;
   if (kbd.rec) {                    // second tap: stop and transcribe
     const rec = kbd.rec;
     kbd.rec = null;
-    micRow.label = '… TRANSCRIBING';
-    kbd.panel.dirty();
+    kbdSetMic('…');
     rec.stop();
     return;
   }
@@ -1161,12 +1163,11 @@ async function kbdMic(micRow) {
       } catch (e) {
         flashHint('dictation failed: ' + (e.message || e));
       }
-      if (kbd) { micRow.label = MIC_IDLE; kbd.panel.dirty(); }
+      if (kbd) kbdSetMic('🎤');
     };
     rec.start();
     kbd.rec = rec;
-    micRow.label = '● LISTENING · TAP TO STOP';
-    kbd.panel.dirty();
+    kbdSetMic('●');
     audio.tick();
   } catch (e) {
     // most likely a denied or unanswered mic permission dialog
