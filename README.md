@@ -210,8 +210,11 @@ What does not work yet, so you know before you fly:
   speaking the OpenAI audio API on 127.0.0.1:8765 (any faster-whisper
   wrapper does). Without one it says so, and the keys keep working.
   Point COMFYVR_STT elsewhere if your sidecar lives on another port.
-- **Subgraphs render but refuse to queue.** You get a readable message
-  instead of a broken run. Flatten them in ComfyUI for now.
+- **Subgraph interiors are not editable yet.** Subgraph workflows
+  queue correctly (comfyvr flattens them the same way the stock
+  frontend does, nesting included), but the inner nodes render as one
+  sealed node. Opening a subgraph into its own room is on the
+  roadmap.
 - **No undo.** Deletes are confirmed and unsaved changes revert on
   reload, but there is no step-by-step undo yet.
 - **Galleries forget on ComfyUI restart.** History lives in ComfyUI's
@@ -233,9 +236,12 @@ workflows, on a screen or standing inside them. In rough order:
 - The agent: an in-space voice you talk to over push-to-talk that
   reads, edits, and queues workflows for you. The bridge and tools
   are in; the wrist mic is in; harnesses plug in over the bridge.
-- Generating VR assets in VR: dictate a prompt, queue an image-to-3D
-  workflow, pinch the placard, walk around the result. The delivery
-  loop already works; blessed workflows are next.
+- Generating VR assets in VR: the loop works today with the bundled
+  `make-vr-asset` workflow (the stock TripoSplat template: image in,
+  gaussian splat out, subgraphs and all; needs ComfyUI v0.23+ and its
+  five TripoSplat model files). Queue it, pinch the placard,
+  walk around the result. Next: dictating the prompt end to end and
+  more blessed workflows.
 - Groups rendered as amphitheater wedges, so a workflow's own
   organization survives into space.
 - Image upload from inside the headset. The browser file picker on
