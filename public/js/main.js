@@ -1569,7 +1569,7 @@ async function wristMic(row) {
     flashHint('mic unavailable: ' + (e.message || e));
   }
 }
-function attachWrist(grip) {
+function attachWrist(grip, ci) {
   if (!wrist) {
     const micRow = buttonRow(AGENT_MIC_IDLE, () => wristMic(micRow));
     const rows = [
@@ -1588,6 +1588,8 @@ function attachWrist(grip) {
   // tick, so the face follows the eyes like every core panel
   mesh.position.set(0, 0.03, 0.1);
   mesh.rotation.set(-1.0, 0, 0);   // first-frame pose only
+  wrist.grip = grip;
+  wrist.ci = ci ?? 0;
   wrist.panel.foldAlpha = 1;
   wrist.panel.dirty();
 }
@@ -1598,7 +1600,7 @@ for (let ci = 0; ci < 2; ci++) {
   rig.add(c);
   const grip = renderer.xr.getControllerGrip(ci);
   rig.add(grip);
-  grip.addEventListener('connected', (e) => { if (e.data?.handedness === 'left') attachWrist(grip); });
+  grip.addEventListener('connected', (e) => { if (e.data?.handedness === 'left') attachWrist(grip, ci); });
   const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]);
   const rayLine = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({
     color: 0x7ce8dc, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthTest: false,
@@ -1863,9 +1865,20 @@ function tick(dt) {
     libraryPanel.update(t);
   }
   if (wrist && renderer.xr.isPresenting) {
+    // With bare hands, three's grip space receives NO pose once getHand()
+    // exists (the hand branch wins in WebXRController.update), so the watch
+    // rides the hand's actual wrist joint; controllers keep the grip.
+    const wj = handViz[wrist.ci]?.hand.joints?.wrist;
+    const parent = (wj && wj.visible) ? wj : wrist.grip;
+    const mesh = wrist.panel.mesh;
+    if (mesh && parent && mesh.parent !== parent) {
+      parent.add(mesh);
+      // dorsal side of the wrist, a touch up the forearm, watch-like
+      mesh.position.set(0, 0.04, 0.06);
+    }
     // watch face billboards to the eyes like every core panel: readable at
     // any wrist angle instead of only at the one tuned tilt
-    wrist.panel.mesh?.lookAt(camWorld);
+    mesh?.lookAt(camWorld);
     wrist.panel.update(t);
   }
   if (renderer.xr.isPresenting) updateHands();
