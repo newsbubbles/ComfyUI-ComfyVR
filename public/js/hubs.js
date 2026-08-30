@@ -75,7 +75,9 @@ export class Hub {
 
   // ---------- amphitheater (open LOD) ----------
   buildBowl() {
-    if (this.panels.size) return;
+    // corePanel is the built-once marker: a zero-node hub has no panels,
+    // and rebuilding on every unfold would stack leaked cores
+    if (this.panels.size || this.corePanel) return;
     for (const node of this.graph.nodes.values()) this.buildPanel(node);
     this.buildCore();
     this.buildLinks();
@@ -263,6 +265,7 @@ export class Hub {
       progressRow(() => this.progress),
       buttonRow('◈ QUEUE', () => this.opts.onQueue(this)),
       buttonRow('⟳ RESEED · SAVE ⬡', (frac) => (frac < 0.5 ? this.reseed() : this.opts.onSave(this))),
+      buttonRow('✚ ADD NODE', () => this.opts.onAddNode?.(this)),
       imageRow('latest signal'),
     ];
     this.corePanel = new Panel({ title: this.name, subtitle: 'core', accent: '#7ce8dc', rows, worldWidth: 3.4, billboard: true });

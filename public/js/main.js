@@ -520,7 +520,9 @@ function fuzzyScore(q, type) {
 function catOf(t) { return ((SCHEMA[t].category || 'other').split('/')[0] || 'other').toLowerCase(); }
 
 function paletteMatches(useCat) {
-  let all = palette.drag.mode === 'reverse'
+  // no drag = free add (empty hub, core button): every type in the install
+  let all = !palette.drag ? Object.keys(SCHEMA)
+    : palette.drag.mode === 'reverse'
     ? typesProducing(SCHEMA, palette.drag.type)
     : typesAccepting(SCHEMA, palette.drag.type);
   if (useCat && palette.cat) all = all.filter(t => catOf(t) === palette.cat);
@@ -538,13 +540,19 @@ function paletteMatches(useCat) {
 }
 
 function addFromPalette(t) {
-  const { drag } = palette;
-  const rel = palette.pos.clone().sub(drag.hub.center());
+  const { drag, hub } = palette;
+  const rel = palette.pos.clone().sub(hub.center());
   const place = { theta: Math.atan2(rel.z, rel.x), r: Math.hypot(rel.x, rel.z), y: rel.y };
-  const pending = drag.mode === 'reverse'
+  if (!drag) {
+    // free add has no wire anchoring it near the bowl; keep the node on it
+    place.r = Math.min(Math.max(place.r, 3.5), hub.rimRadius + 4);
+    place.y = Math.min(Math.max(place.y, 0.6), hub.rimY + 8);
+  }
+  const pending = !drag ? null
+    : drag.mode === 'reverse'
     ? { reverse: true, dstNode: drag.dstNode, dstSlot: drag.dstSlot, type: drag.type }
     : { srcNode: drag.srcNode, srcSlot: drag.srcSlot, type: drag.type };
-  drag.hub.addNodeAt(t, place, pending);
+  hub.addNodeAt(t, place, pending);
   closePalette();
 }
 
@@ -589,7 +597,11 @@ function buildPalette() {
                      : [readoutRow(() => 'no matching node types', () => '')]),
     ...(pages > 1 ? [buttonRow(`◂  ${palette.page + 1} / ${pages}  ▸`, (frac) => palettePage(frac < 0.5 ? -1 : 1))] : []),
   ];
-  const panel = new Panel({ title: 'add node', subtitle: palette.drag.type, accent: colorForType(palette.drag.type), rows, worldWidth: 3.0, billboard: true });
+  const panel = new Panel({
+    title: 'add node', subtitle: palette.drag ? palette.drag.type : 'any type',
+    accent: palette.drag ? colorForType(palette.drag.type) : '#7ce8dc',
+    rows, worldWidth: 3.0, billboard: true,
+  });
   panel.placeFlat(scene, palette.pos);
   panel.mesh.userData.palette = true;
   panel.dirty();
@@ -597,18 +609,38 @@ function buildPalette() {
 }
 
 let paletteExpanded = false;
-function openPalette(drag) {
-  closePalette();
-  // SCHEMA is lazily filled with only the types loaded workflows use; the
-  // palette should offer the whole install. object_info is already cached,
-  // so expand once, on first open.
+// SCHEMA is lazily filled with only the types loaded workflows use; the
+// palette should offer the whole install. object_info is already cached,
+// so expand once, on first open.
+function expandPaletteSchema() {
   if (!paletteExpanded && client.mode === 'live' && client.objectInfo) {
     Object.assign(SCHEMA, schemaFromObjectInfo(client.objectInfo, Object.keys(client.objectInfo)));
     paletteExpanded = true;
   }
+}
+function openPalette(drag) {
+  closePalette();
+  expandPaletteSchema();
   const any = drag.mode === 'reverse' ? typesProducing(SCHEMA, drag.type).length : typesAccepting(SCHEMA, drag.type).length;
   if (!any) return;
   palette = { panel: null, pos: drag.drop.clone(), hub: drag.hub, drag, query: '', first: null, mode: 'list', cat: null, page: 0 };
+  buildPalette();
+  audio.accrete();
+}
+// Free add: no wire, no type filter. The ✚ ADD NODE button on a hub's core
+// opens this — the only way to grow a workflow that has nothing to pull from.
+function openPaletteFree(hub) {
+  closePalette();
+  expandPaletteSchema();
+  let pos;
+  if (renderer.xr.isPresenting) {
+    const head = camera.getWorldPosition(new THREE.Vector3());
+    const dir = camera.getWorldDirection(new THREE.Vector3());
+    pos = head.addScaledVector(dir, 6);
+  } else {
+    pos = cam.pos.clone().add(forward().multiplyScalar(8));
+  }
+  palette = { panel: null, pos, hub, drag: null, query: '', first: null, mode: 'cats', cat: null, page: 0 };
   buildPalette();
   audio.accrete();
 }
@@ -651,6 +683,7 @@ function buildLibrary() {
       glyphRow('⌸', true),
       readoutRow(() => `${wfIndex.length} workflows`, () => `${hubs.length} open`),
       buttonRow('⌸ BROWSE', () => openBrowser()),
+      buttonRow('✚ NEW WORKFLOW', () => newWorkflow()),
     ],
   });
   libraryPanel.placeFlat(scene, new THREE.Vector3(0, 0, 0));
@@ -668,6 +701,29 @@ async function refreshWfIndex() {
     ...user.filter(u => !loc.some(l => l.name === u.name)).map(u => ({ name: u.name, source: 'comfyui', path: u.path })),
   ];
   libraryPanel?.dirty();
+}
+
+// ---------- workflow from nothing: name it, save an empty graph, fly in ----------
+async function createWorkflow(rawName) {
+  let name = String(rawName || '').replace(/[^\w .()\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!name) name = 'untitled';
+  const taken = new Set([...wfIndex.map(w => w.name.toLowerCase()), ...hubs.map(h => h.name.toLowerCase())]);
+  let unique = name;
+  for (let i = 2; taken.has(unique.toLowerCase()); i++) unique = `${name} ${i}`;
+  const json = { nodes: [], links: [], groups: [], config: {}, extra: {}, version: 0.4, last_node_id: 0, last_link_id: 0 };
+  const ok = await client.saveLocalWorkflow(unique, json);
+  if (!ok) { flashHint('create FAILED'); audio.toggle(false); return; }
+  await refreshWfIndex();
+  await openWorkflow({ name: unique, source: 'local' });
+}
+
+function newWorkflow() {
+  // a synthetic row rides the normal text-entry path: DOM editor on
+  // desktop, in-space keyboard in XR — commit lands in onChange
+  const row = { name: 'workflow name', oneline: true, widget: { value: '' } };
+  row.get = () => row.widget.value;
+  row.onChange = () => { createWorkflow(row.widget.value).catch((e) => flashHint('create failed: ' + (e.message || e))); };
+  openEditor({ title: 'new workflow', accent: '#7ce8dc', disposed: false, dirty() {} }, row);
 }
 
 function isOpen(w) { return hubs.some(h => h.name === w.name); }
@@ -694,6 +750,7 @@ function buildBrowser() {
   const rows = [
     readoutRow(() => (browser?.query ? '⌕ ' + browser.query : '⌕ type to filter'),
                () => '● open · right edge closes'),
+    buttonRow('✚ NEW WORKFLOW', () => newWorkflow()),
     ...(slice.length ? slice.map(w => {
       const open = isOpen(w);
       return buttonRow(`${open ? '●' : '◌'} ${w.name.toUpperCase()}${w.source === 'local' ? ' ⬡' : ''}`, (frac) => {
@@ -768,7 +825,7 @@ function hideGalleryCard() {
 async function openWorkflow(w) {
   try {
     const json = w.source === 'local' ? await client.loadLocalWorkflow(w.name) : await client.loadUserdataWorkflow(w.path);
-    if (!json || !Array.isArray(json.nodes) || !json.nodes.length) { flashHint('not a workflow: ' + w.name); return; }
+    if (!json || !Array.isArray(json.nodes)) { flashHint('not a workflow: ' + w.name); return; }
     const missing = [...new Set(json.nodes.map(n => n.type))].filter(t => !SCHEMA[t]);
     if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
     applySidecarLayout(json, w.source, w.name);
@@ -1238,7 +1295,9 @@ function hubOpts() {
     mediaURL: (m) => client.viewURL(m),
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
+    onAddNode: (h) => openPaletteFree(h),
     onQueue: async (h) => {
+      if (!h.graph.nodes.size) { flashHint('nothing to run yet · ✚ ADD NODE first'); return; }
       audio.queueSweep();
       try {
         await client.queue(h);
@@ -1275,7 +1334,8 @@ async function boot() {
     if (item.name.startsWith('_')) continue;   // scratch files, not workflows
     try {
       const json = await client.loadLocalWorkflow(item.name);
-      if (Array.isArray(json.nodes) && json.nodes.length) jsons.push({ name: item.name, json, source: 'local' });
+      // empty nodes is a real (just-created) workflow, not junk
+      if (Array.isArray(json.nodes)) jsons.push({ name: item.name, json, source: 'local' });
     } catch (e) { fail(`load ${item.name}: ${e}`); }
   }
   // the user's real workflows, saved server-side by the ComfyUI frontend
@@ -1611,6 +1671,7 @@ function attachWrist(grip, ci) {
                  () => (client.queueRemaining ? '◈ ' + client.queueRemaining + ' queued' : '')),
       micRow,
       buttonRow('⌸ WORKFLOWS', () => openBrowser()),
+      buttonRow('✚ NEW', () => newWorkflow()),
       buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
     ];
@@ -1963,7 +2024,8 @@ function tick(dt) {
 // pane), and snapshots the GL canvas without preserveDrawingBuffer.
 window.CVR = {
   hubs, cam, beams, client, camera, THREE,
-  openPalette, pal: () => palette,
+  openPalette, openPaletteFree, pal: () => palette,
+  newWorkflow, createWorkflow,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openKbd, kbd: () => kbd, kbdKey,
   hear: (t) => agentApi?.hear(t),

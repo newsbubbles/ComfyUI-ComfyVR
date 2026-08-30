@@ -72,6 +72,12 @@ backend at all so you can explore the space cold.
   thing that feeds it. Type to fuzzy-filter on desktop, or browse by
   category and page through with pinches in VR. The ✕ in a node's
   header deletes it, with a confirm tap.
+- **Workflows from nothing**: ✚ NEW on the wrist watch, the library,
+  or the workflow list starts an empty workflow. Name it with the
+  keyboard, and it appears on the horizon as a bare hub. ✚ ADD NODE
+  on its core opens the palette across every type in your install;
+  after the first node, grow the rest by pulling wires. Saving keeps
+  it a normal ComfyUI workflow file, loadable anywhere.
 - **Sane controls**: sliders travel useful ranges (steps sweeps 1 to
   150, not 1 to 10000), mouse wheel fine-nudges one step at a time,
   seeds with randomize actually randomize between queues, and stored
@@ -154,7 +160,8 @@ requires a secure context, and there are three ways to get one:
 | Click | left click | trigger | pinch |
 | Move a node | drag its title bar | hold trigger on title bar | pinch and hold title bar |
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
-| Add a node | drop a wire from any port into space | same, by ray | same, by pinch |
+| Add a node | drop a wire from any port into space, or ✚ ADD NODE on the core | same, by ray | same, by pinch |
+| New workflow | ✚ NEW in the library or workflow list | ✚ NEW on the wrist | same |
 | Delete a node | ✕ on its header, twice | same, by ray | same, by pinch |
 | Edit text | click the field | in-space keyboard, or dictate | same |
 | Browse workflows | library at the center | same | same |
@@ -205,10 +212,8 @@ What does not work yet, so you know before you fly:
   Point COMFYVR_STT elsewhere if your sidecar lives on another port.
 - **Subgraphs render but refuse to queue.** You get a readable message
   instead of a broken run. Flatten them in ComfyUI for now.
-- **You cannot create a workflow from nothing yet.** Editing today
-  means tweaking, rewiring, growing nodes from dropped wires, and
-  deleting. There is no undo, so deletes are confirmed and unsaved
-  changes revert on reload.
+- **No undo.** Deletes are confirmed and unsaved changes revert on
+  reload, but there is no step-by-step undo yet.
 - **Galleries forget on ComfyUI restart.** History lives in ComfyUI's
   memory; recall from the output folder on disk is planned.
 - **Custom nodes render generically.** Standard widget types (sliders,
@@ -225,8 +230,6 @@ What does not work yet, so you know before you fly:
 The goal: the most natural place to run, tend, and remix generative
 workflows, on a screen or standing inside them. In rough order:
 
-- Creating workflows: start an empty one from the wrist, grow it node
-  by node, name it with the in-space keyboard, save it.
 - The agent: an in-space voice you talk to over push-to-talk that
   reads, edits, and queues workflows for you. The bridge and tools
   are in; the wrist mic is in; harnesses plug in over the bridge.
