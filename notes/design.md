@@ -208,9 +208,72 @@ Others worth imagining:
   operator strolls the line. The most literal lean translation; maybe
   the right mode for a single huge workflow rather than for the
   constellation.
-- Modes are a per-user preference, not a redesign: all three are
+- **Orbital station (subgraph workstation, noted 2026-08-30)**: the
+  DAG as the workstation itself. A spine carries the top-level
+  workflow; each subgraph instance is a docked MODULE hanging off it.
+  Approach a module and it opens into its own small amphitheater.
+  This moved from imagination to buildable today: parseWorkflow now
+  parses every subgraph definition into `graph.defs`, so the interior
+  of a subgraph exists as a first-class graph object the renderer
+  could stand up with the exact machinery hubs already use. Swapping
+  stations falls out of the boundary model: the -10/-20 io boundary
+  IS the docking collar, and two definitions with the same input and
+  output signature are interchangeable modules, so "swap this stage
+  out" is a palette filtered by boundary signature. It also settles
+  the groups-versus-subgraphs rendering question: groups are wedges
+  of one amphitheater, subgraphs are separate rooms.
+- **Higher-dimensional views (noted 2026-08-30)**, three readings in
+  increasing wildness:
+  1. Projection rotation: the layout is already one projection of a
+     higher-dimensional description of each workflow (graph depth,
+     category, checkpoint family, touch frequency, recency). Make
+     several arrangements meaningful and let the view ROTATE between
+     them, a rotation in layout space rather than world space. The
+     transition itself is information: hubs that stay neighbors
+     across many projections are deeply related, and you see that as
+     they travel together.
+  2. Hyperbolic space: the classic host for big DAGs and libraries
+     (Munzner's H3 lineage). Exponential volume means every workflow
+     can sit one step from the center; things swell as you approach
+     in a pleasantly dreamlike way. Doable as a Poincare-ball
+     projection in a shader; comfort untested; likely a LIBRARY view
+     rather than the working space.
+  3. Time as the fourth axis: a completed run is a trajectory
+     (execution order, pulses, outputs being born). Scrubbing a run
+     is travel along that axis and the gallery is a slice of it.
+     Pairs naturally with disk-based gallery recall, since the
+     output folder is already a time series.
+- Modes are a per-user preference, not a redesign: all of these are
   placements of the same hubs, and the layout sidecar already knows
   how to remember arrangements per mode key.
+
+## Scenes (noted 2026-08-30)
+
+The environment dressing is a separate axis from layout. One rule
+first: the motes earn their place because they are a state display
+(self-motion made visible) disguised as decoration. Every scene
+element should pass the same test: encode something (motion, system
+state, provenance), or stay out.
+
+- **Space** (current): darkness buys panel legibility for free, and
+  the motes carry vection. The baseline to beat.
+- **Deep ocean**: marine snow beats motes for vection (denser, slow,
+  omnidirectional), bioluminescence justifies the glow aesthetic
+  outright, and the darkness win carries over. Hubs at whale-fall
+  distances; a queue pulse reads as jellyfish propulsion.
+- **Weather as andon**: scene-scale state display. Queue busy makes
+  auroras ripple, an error puts a distant storm cell over that hub's
+  bearing, all-idle is still air. The system's health reaches you
+  peripherally before any panel is read.
+- **The splat IS the scene**: the loader already materializes walk-in
+  rooms, so any splat can be promoted to WORLD, your scanned living
+  room as the environment with workflows floating in it. With
+  make-vr-asset the loop closes: generate a place, then work inside
+  the place you generated. Scene generation becomes just another
+  workflow output class.
+- **Holodeck baseline**: a deliberately empty gridded room that
+  materializes only what is summoned. Cheapest to render, best
+  framerate, and the crowd already reached for the word unprompted.
 
 ## Groups (design 2026-08-30)
 

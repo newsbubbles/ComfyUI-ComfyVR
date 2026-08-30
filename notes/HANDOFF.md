@@ -288,24 +288,44 @@ mini locally, partner/API nodes for zero VRAM), then ship a
 make-vr-asset sample workflow (remember the gitignore whitelist
 needs each new sample named) and demo the loop.
 
-### Next spike: workflow from scratch (spec 2026-08-30)
+UPDATE 2026-08-30: done through the sample. ComfyUI upgraded
+0.17 -> v0.34.2 (detached at the tag; rollback = `git checkout
+7a16e8aa` + pip install -r requirements.txt; torch untouched). All
+five TripoSplat models live under D:\comfyui-models via
+extra_model_paths.yaml (C: was down to 5GB). SUBGRAPH FLATTENING
+SHIPPED (863590f): parseWorkflow parses definitions.subgraphs into
+graph.defs (one parse per def, shared by instances, nesting via the
+defCache); toApiFormat emits inner nodes as parent:child colon ids.
+Boundary mechanics learned from the real template: -10 is the
+definition's input side, -20 the output side; -10 links map to
+def.inputs by linkIds (slot as fallback), then by NAME onto the
+instance's inputs; an unfed promoted widget resolves to undefined so
+the inner node's stored value stands (that is where the model names
+live — instance widgets_values is EMPTY, values ride the def's
+inner nodes, proxyWidgets is display-only). make-vr-asset.json =
+the stock TripoSplat template, whitelisted. Verified: 26 api nodes,
+88:85:81 image resolves through two boundaries to ["99",0], nested
+instance-as-source resolves through the inner -20.
 
-The biggest remaining limitations-list item. The pieces:
+### Workflow from scratch: SHIPPED (84cd4ab, 2026-08-30)
 
-1. **NEW WORKFLOW on the wrist** (and in the library panel for
-   desktop): creates an empty graph `{nodes: [], links: []}`, places a
-   fresh hub in the widest horizon gap, and opens the in-space
-   keyboard to name it (the keyboard is why this is now possible).
-2. **Palette from nothing.** The add-node palette currently opens only
-   from link drags. An empty hub's core panel gets an ADD NODE button
-   opening the palette in category mode with no type filter; the first
-   node lands on ring zero. After that, growth is the existing pull
-   system in both directions.
-3. **Save path** already exists (SAVE writes local copies). New
-   workflows are `source: 'local'` from birth, so nothing touches
-   userdata.
-4. Template seeding (start from portrait-sdxl instead of empty) rides
-   the same NEW flow with a picker row; do empty first.
+Built to the spec below and verified end to end on desktop (create,
+name via the editor path, ADD NODE via the free palette, grow by
+pull, save, reload, persists with layout). Notes for future work:
+
+- `newWorkflow()` rides the normal text path: a synthetic row +
+  stub panel through `openEditor`, which hands off to the in-space
+  keyboard when presenting. Any future "rename workflow" can reuse it.
+- The free palette is `openPaletteFree(hub)`: `palette.drag = null`
+  means "all types, category mode". `addFromPalette` clamps free-added
+  nodes onto the bowl (r into [3.5, rim+4], y >= 0.6).
+- Empty-hub gotcha fixed in `buildBowl`: it now also checks
+  `corePanel`, because a zero-node hub has no panels and would rebuild
+  (and leak) a core every unfold.
+- Boot and `openWorkflow` accept zero-node files now; junk detection
+  is "no nodes array at all" plus the `_` prefix rule.
+- Template seeding (start from portrait-sdxl instead of empty) rides
+  the same NEW flow with a picker row; still open.
 
 Also shipped 2026-08-30: VISIBLE HANDS (25 tracked joints per hand
 render as glowing spheres, sized by the runtime's joint radii; fixes
