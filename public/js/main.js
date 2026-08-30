@@ -199,11 +199,33 @@ let pendingGrab = null, moveDrag = null, linkDrag = null, palette = null;
 let lastInput = performance.now();
 const canvas = renderer.domElement;
 
+// ---------- idle walk that owes you your spot back ----------
+// The orbit can start whenever it likes because leaving costs nothing: it
+// remembers exactly where you stood and how you faced, and your first mouse
+// movement flies you home (a quick travel, not a teleport). Keyboard and
+// wheel mean you are steering from wherever you are, so they cancel the
+// return instead. Start time is long and jittered, re-rolled per episode.
+let idleReturn = null;
+let idleHover = null;
+let idleDelayMs = 60000 + Math.random() * 30000;
+function idleComeBack() {
+  if (!idleReturn) return;
+  const r = idleReturn;
+  idleReturn = null; idleHover = null;
+  idleDelayMs = 60000 + Math.random() * 30000;
+  cam.level = r.level; cam.hub = r.hub;
+  const drifted = cam.pos.distanceTo(r.pos) > 1 || Math.abs(cam.yaw - r.yaw) > 0.05;
+  if (drifted) flyTo(r.pos, r.look, 0.9);
+  else { cam.pos.copy(r.pos); syncAngles(r.look); }   // barely moved: just snap
+}
+function idleAbandon() { idleReturn = null; idleHover = null; idleDelayMs = 60000 + Math.random() * 30000; }
+
 canvas.addEventListener('pointerdown', (e) => {
   if (!e.isPrimary) return;   // a second touch must not fight the first over the camera
   audio.ensure();
   try { THREE.AudioContext.getContext().resume(); } catch (err) { /* no positional audio yet */ }
   lastInput = performance.now();
+  idleComeBack();   // touch has no hover; first tap after a walk goes home
   pdown = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY };
   dragMode = null; pendingGrab = null;
   const hit = pick(e);
@@ -266,6 +288,15 @@ canvas.addEventListener('pointermove', (e) => {
     }
     return;
   }
+  // bare mouse movement counts as presence: it holds off the idle walk, and
+  // if the walk already wandered, a real jiggle (not a desk bump) flies home
+  lastInput = performance.now();
+  if (idleReturn) {
+    idleHover = idleHover || { x: e.clientX, y: e.clientY, px: 0 };
+    idleHover.px += Math.hypot(e.clientX - idleHover.x, e.clientY - idleHover.y);
+    idleHover.x = e.clientX; idleHover.y = e.clientY;
+    if (idleHover.px > 8) idleComeBack();
+  }
   hover(e);
 });
 canvas.addEventListener('pointerup', (e) => {
@@ -316,10 +347,12 @@ canvas.addEventListener('wheel', (e) => {
   }
   cam.vel.add(forward().multiplyScalar(e.deltaY < 0 ? 3.5 : -3.5));
   cam.anim = null;
+  idleAbandon();   // wheel travel = steering from here, not going back
 });
 addEventListener('keydown', (e) => {
   if (editorOpen()) return;
   lastInput = performance.now();
+  idleAbandon();   // keyboard = manual control from wherever you are
   if (e.key === 'Escape') {
     if (palette) { closePalette(); return; }
     if (browser) { closeBrowser(); return; }
@@ -1821,8 +1854,16 @@ function tick(dt) {
     if (keys.has('d')) cam.vel.addScaledVector(right, spd * dt);
     if (keys.has('q')) cam.vel.y -= spd * dt;
     if (keys.has('e')) cam.vel.y += spd * dt;
-    // idle drift: orbit the current focus
-    if (performance.now() - lastInput > 20000) {
+    // idle drift: orbit the current focus, after first remembering the spot
+    // and facing the user left, so coming back is free
+    if (performance.now() - lastInput > idleDelayMs) {
+      if (!idleReturn) {
+        idleReturn = {
+          pos: cam.pos.clone(),
+          look: cam.pos.clone().addScaledVector(forward(), 10),
+          yaw: cam.yaw, level: cam.level, hub: cam.hub,
+        };
+      }
       const center = cam.hub ? cam.hub.center() : new THREE.Vector3(0, 0, 0);
       const off = cam.pos.clone().sub(center);
       off.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 0.02);
@@ -1926,6 +1967,8 @@ window.CVR = {
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openKbd, kbd: () => kbd, kbdKey,
   hear: (t) => agentApi?.hear(t),
+  idleTest: () => { lastInput = performance.now() - idleDelayMs - 1000; },
+  idleState: () => ({ walking: !!idleReturn, delayS: Math.round(idleDelayMs / 1000) }),
   tick: (dt = 1 / 60, n = 1) => { for (let i = 0; i < n; i++) tick(dt); },
   fly: (i) => flyToHub(hubs[i]),
   look: (px, py, pz, lx, ly, lz) => { cam.anim = null; cam.dock = null; cam.pos.set(px, py, pz); syncAngles(new THREE.Vector3(lx, ly, lz)); },
