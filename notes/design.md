@@ -163,6 +163,46 @@ Taken seriously:
 The "additional dimension and complexity" comment reads as intended:
 complexity is the material here, the job is making it legible.
 
+## Hand rendering options (noted 2026-08-30)
+
+Shipped: joints as glowing spheres, the simple base. The knob to add
+later is a hand STYLE option, all driven by the same 25 joints:
+
+- **Skeleton**: bones as thin additive lines between joints, sci-fi
+  wireframe hands.
+- **Particles**: joints emit slow sparks; motion leaves faint trails.
+  Expensive-looking, cheap to do (we own a particle idiom in beams).
+- **Pinch feedback everywhere**: the thumb-to-index gap rendered as a
+  brightening arc as a pinch closes, so the select gesture telegraphs
+  itself before it fires. Probably the highest-value one; it is
+  feedback, not decoration.
+- **Mesh hands** last: real skinned hands fight the holographic
+  aesthetic and cost the most.
+
+## World layout modes (noted 2026-08-30)
+
+The horizon (current) is one answer to "where do workflows live."
+Others worth imagining:
+
+- **Orrery**: the operator stays put; the constellation lives on a
+  great sphere around or before them that ROTATES and BREATHES to
+  bring the wanted thing into reach. Referential motion instead of
+  locomotion: you never travel, the world serves you. This pairs
+  naturally with the voice agent ("bring me the portrait workflow"
+  rotates it in) and with the ergonomics notes: the golden zone stays
+  fixed and the world flows through it, which is exactly a lean line
+  moving past a stationary station. COMFORT WARNING: a world rotating
+  around a stationary user is textbook vection; mitigations are snap
+  rotation, brief fades, and continuous motion along radials only
+  (expand and contract reads far safer than yaw).
+- **Assembly line**: workflows or stations in a walkable row, the
+  operator strolls the line. The most literal lean translation; maybe
+  the right mode for a single huge workflow rather than for the
+  constellation.
+- Modes are a per-user preference, not a redesign: all three are
+  placements of the same hubs, and the layout sidecar already knows
+  how to remember arrangements per mode key.
+
 ## Groups (design 2026-08-30)
 
 ComfyUI groups are named colored boxes in the 2D canvas: the workflow
