@@ -42,6 +42,11 @@ zero nodes, just the frontend route. Your workflow files are never
 modified: edits save local copies inside this folder, and everything
 stays loadable in vanilla ComfyUI.
 
+One thing this address cannot do is VR on a headset: it is plain http,
+and WebXR only starts on a secure page, so the ENTER VR button will
+not appear there over the network. For that, run `python vr.py` and
+use the https address it prints. See the VR section.
+
 There is also a standalone mode (`python server.py`, needs `aiohttp`)
 that proxies to any ComfyUI backend, and a demo mode that works with no
 backend at all so you can explore the space cold.
@@ -127,6 +132,12 @@ requires a secure context, and there are three ways to get one:
   then proceed: self-signed is expected, and a warned https page still
   counts as a secure context), and press `ENTER VR`. If the page never
   loads, the script prints the exact firewall command to run.
+
+  This is also the everyday start: after any reboot, start ComfyUI,
+  run `python vr.py` again, and open the same address. The certificate
+  is reused, so the warning only happens the first time. The voice
+  sidecar for dictation and the agent is optional and separate; start
+  it too if you use those.
 - **USB** (Quest with developer mode): connect the cable, run
   `adb reverse tcp:8188 tcp:8188`, then open
   `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
