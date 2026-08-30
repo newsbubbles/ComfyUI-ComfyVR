@@ -176,6 +176,15 @@ later is a hand STYLE option, all driven by the same 25 joints:
   brightening arc as a pinch closes, so the select gesture telegraphs
   itself before it fires. Probably the highest-value one; it is
   feedback, not decoration.
+- **Workflow hands** (the house-special idea): each hand IS a little
+  workflow. The hand skeleton is already a DAG, wrist as the root,
+  five branches, tips as leaves: render joints as mini node panels
+  and bones as beams, and run a pulse from wrist to fingertip when a
+  pinch fires, so the select gesture reads as an execution. The user
+  wearing the product's own data model as their body.
+- **Plain grey hands**: a quiet, neutral option for people who want
+  normal-looking hands, and for videos where the audience should read
+  "hands" instantly with zero explanation.
 - **Mesh hands** last: real skinned hands fight the holographic
   aesthetic and cost the most.
 
