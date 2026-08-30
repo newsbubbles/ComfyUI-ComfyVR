@@ -2,7 +2,7 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
+import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
@@ -826,7 +826,7 @@ async function openWorkflow(w) {
   try {
     const json = w.source === 'local' ? await client.loadLocalWorkflow(w.name) : await client.loadUserdataWorkflow(w.path);
     if (!json || !Array.isArray(json.nodes)) { flashHint('not a workflow: ' + w.name); return; }
-    const missing = [...new Set(json.nodes.map(n => n.type))].filter(t => !SCHEMA[t]);
+    const missing = [...workflowTypes(json)].filter(t => !SCHEMA[t]);
     if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
     applySidecarLayout(json, w.source, w.name);
     const graph = parseWorkflow(json, SCHEMA);
@@ -1348,7 +1348,7 @@ async function boot() {
     } catch (e) { console.warn('userdata load failed', item.path, e); }
   }
   const types = new Set();
-  for (const { json } of jsons) for (const n of json.nodes || []) types.add(n.type);
+  for (const { json } of jsons) for (const t of workflowTypes(json)) types.add(t);
   const schema = await client.schemaFor([...types]);
   SCHEMA = schema;
 
@@ -1520,7 +1520,7 @@ function pngTextChunks(buf) {
 
 // A dropped workflow unfolds where you're looking — provenance accretion.
 async function accreteHub(name, json, bitmap) {
-  const missing = [...new Set((json.nodes || []).map(n => n.type))].filter(t => !SCHEMA[t]);
+  const missing = [...workflowTypes(json)].filter(t => !SCHEMA[t]);
   if (missing.length) Object.assign(SCHEMA, await client.schemaFor(missing));
   let base = name.replace(/[\\/]/g, '_') || 'dropped', nm = base, i = 2;
   while (hubs.some(h => h.name === nm)) nm = `${base}-${i++}`;

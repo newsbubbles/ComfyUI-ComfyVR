@@ -178,7 +178,21 @@ export function schemaFromObjectInfo(objectInfo, types) {
 // Parse a litegraph workflow into {nodes: Map, links: Map, order: [...]}.
 // Each node: {id, type, title, schema, widgets:[{name,wtype,value,...}],
 // linkInputs:[{name,type,link}], outputs:[{name,type,links:[...]}]}.
-export function parseWorkflow(json, schema) {
+// Virtual node ids litegraph uses for a subgraph definition's io boundary.
+const SUB_IN = -10, SUB_OUT = -20;
+
+// Every node type a workflow file mentions, including the nodes inside its
+// subgraph definitions — those need schema too or flattening can't queue.
+export function workflowTypes(json) {
+  const types = new Set();
+  for (const n of json.nodes || []) types.add(n.type);
+  for (const d of ((json.definitions || {}).subgraphs || [])) {
+    for (const n of d.nodes || []) types.add(n.type);
+  }
+  return types;
+}
+
+export function parseWorkflow(json, schema, defCache = null) {
   const nodes = new Map();
   const links = new Map();
   // Subgraphs / group nodes: legacy "workflow/Name" types, or (new-style)
@@ -277,10 +291,28 @@ export function parseWorkflow(json, schema) {
     });
   }
   // Drop links whose endpoints are missing (defensive against hand edits).
+  // Virtual boundary nodes survive: inside a subgraph definition, -10 is
+  // the input side and -20 the output side, and flattening needs them.
   for (const [id, L] of [...links]) {
-    if (!nodes.has(L.src) || !nodes.has(L.dst)) links.delete(id);
+    if ((L.src !== SUB_IN && !nodes.has(L.src)) || (L.dst !== SUB_OUT && !nodes.has(L.dst))) links.delete(id);
   }
-  return { nodes, links, raw: json };
+  // Parse each subgraph definition once, shared by all its instances (an
+  // instance's type is the definition's id). Definitions can nest, so the
+  // cache rides the recursion and doubles as the cycle guard.
+  const defs = defCache || new Map();
+  for (const d of ((json.definitions || {}).subgraphs || [])) {
+    const key = String(d.id);
+    if (defs.has(key)) continue;
+    defs.set(key, null);
+    const inner = parseWorkflow({
+      nodes: d.nodes || [],
+      // definition links are objects, top-level links are arrays
+      links: (d.links || []).map(l => [l.id, l.origin_id, l.origin_slot, l.target_id, l.target_slot, l.type]),
+      definitions: json.definitions,
+    }, schema, defs);
+    defs.set(key, { def: d, graph: inner });
+  }
+  return { nodes, links, raw: json, defs };
 }
 
 function defaultFor(inp) {
@@ -503,11 +535,28 @@ function resolveUpstream(graph, L) {
 }
 
 // ComfyUI API ("prompt") format: {id: {class_type, inputs}}.
+// Subgraph instances are flattened the way the stock frontend does it:
+// inner nodes emit under parent:child colon ids, boundary links resolve
+// through the instance into the surrounding graph, and a boundary input
+// nothing feeds resolves to undefined so the inner widget value stands.
 export function toApiFormat(graph) {
   const api = {};
+  emitGraph(api, graph, '', null);
+  return api;
+}
+
+// boundary describes the instance an inner graph is being emitted for:
+// {def, node (the instance in the parent), graph (parent), prefix (parent's),
+//  boundary (parent's own, for nesting)}.
+function emitGraph(api, graph, prefix, boundary) {
   for (const node of graph.nodes.values()) {
     if (FRONTEND_ONLY.has(node.type)) continue;
-    if (node.subgraph) throw new Error(`"${node.title}" is a subgraph — comfyvr can't queue those yet (flatten it in ComfyUI first)`);
+    if (node.subgraph) {
+      const entry = graph.defs?.get(node.type);
+      if (!entry) throw new Error(`"${node.title}" is a subgraph with no definition in this file — comfyvr can't queue it (flatten it in ComfyUI first)`);
+      emitGraph(api, entry.graph, prefix + node.id + ':', { def: entry.def, node, graph, prefix, boundary });
+      continue;
+    }
     if (!node.schema) throw new Error(`no schema for node type ${node.type} — is that custom node installed?`);
     const inputs = {};
     for (const wg of node.widgets) {
@@ -519,13 +568,63 @@ export function toApiFormat(graph) {
       let L = graph.links.get(li.link);
       if (L) L = resolveUpstream(graph, L);
       if (!L) continue;
-      const src = graph.nodes.get(L.src);
-      if (src?.type === 'PrimitiveNode') { inputs[li.name] = src.widgets[0]?.value; continue; }
-      inputs[li.name] = [String(L.src), L.srcSlot];
+      const src = resolveSrc(graph, prefix, boundary, L);
+      if (src === undefined) continue;
+      inputs[li.name] = src;
     }
-    api[String(node.id)] = { class_type: node.type, inputs };
+    api[prefix + String(node.id)] = { class_type: node.type, inputs };
   }
-  return api;
+}
+
+// Resolve a link's source to an API input value: ["id", slot], an inlined
+// primitive value, or undefined when a subgraph boundary input is unfed.
+function resolveSrc(graph, prefix, boundary, L) {
+  if (L.src === SUB_IN) return resolveBoundaryInput(boundary, L);
+  const src = graph.nodes.get(L.src);
+  if (src?.type === 'PrimitiveNode') return src.widgets[0]?.value;
+  if (src?.subgraph) return resolveInstanceOutput(graph, prefix, boundary, src, L.srcSlot);
+  return [prefix + String(L.src), L.srcSlot];
+}
+
+// A link from -10: find which definition input feeds it (linkIds first,
+// slot index as fallback), then look at the instance in the parent. A real
+// parent link resolves there; otherwise the input is a promoted widget the
+// instance holds no value for, and undefined lets the inner value stand.
+function resolveBoundaryInput(boundary, L) {
+  if (!boundary) return undefined;
+  const dins = boundary.def.inputs || [];
+  let idx = dins.findIndex(di => (di.linkIds || []).includes(L.id));
+  if (idx < 0) idx = L.srcSlot;
+  const name = dins[idx]?.name;
+  if (name == null) return undefined;
+  const li = boundary.node.linkInputs.find(x => x.name === name);
+  if (li && li.link != null) {
+    let PL = boundary.graph.links.get(li.link);
+    if (PL) PL = resolveUpstream(boundary.graph, PL);
+    if (PL) return resolveSrc(boundary.graph, boundary.prefix, boundary.boundary, PL);
+  }
+  const wg = boundary.node.widgets.find(w => w.name === name);
+  return wg ? wg.value : undefined;
+}
+
+// An instance used as a source: follow the definition's -20 boundary at
+// that output slot to the inner producer (or through it, for passthroughs
+// and nested instances).
+function resolveInstanceOutput(graph, prefix, boundary, inst, slot) {
+  const entry = graph.defs?.get(inst.type);
+  if (!entry) throw new Error(`"${inst.title}" is a subgraph with no definition in this file — comfyvr can't queue it (flatten it in ComfyUI first)`);
+  const dg = entry.graph;
+  const out = (entry.def.outputs || [])[slot];
+  let inner = null;
+  for (const IL of dg.links.values()) {
+    if (IL.dst !== SUB_OUT) continue;
+    if (out && (out.linkIds || []).includes(IL.id)) { inner = IL; break; }
+    if (!inner && IL.dstSlot === slot) inner = IL;
+  }
+  if (!inner) return undefined;
+  const resolved = resolveUpstream(dg, inner);
+  if (!resolved) return undefined;
+  return resolveSrc(dg, prefix + inst.id + ':', { def: entry.def, node: inst, graph, prefix, boundary }, resolved);
 }
 
 export function randomizeSeeds(graph) {
