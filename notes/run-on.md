@@ -74,6 +74,46 @@ route, we never resell compute; the user holds their own provider
 account and pays the provider directly. ComfyCloud becomes one row
 in the list, never the list.
 
+## Adversarial pass on the vacancy claim (2026-09-01)
+
+Searched to kill it before building, as the avatar claim taught.
+
+DEAD: "manifest-driven environment bootstrap" as novel tech. It is
+occupied at least four times over: ComfyUI-Launcher (ComfyWorkflows,
+"run any workflow with ZERO setup," auto-installs nodes and models
+from the workflow json, isolated per-workflow envs), comfy_runner
+(piyushK52), comfy-cli's OFFICIAL `node install-deps --workflow`,
+and RunPod's own ComfyUI-to-API (an agent analyzes the workflow,
+finds nodes and model URLs, and emits a Dockerfile). RunComfy's
+hosted auto-setup does it as a service. We must NOT write our own
+resolver; the pod bootstrap should shell out to comfy-cli and the
+Manager registry machinery, with the embedded cnr_id/ver and
+properties.models as first-choice inputs. ComfyUI-Launcher's
+per-workflow isolation is prior art for the volume layout.
+
+SURVIVED, sharper than before:
+1. THE INTERACTIVE SESSION. Every remote occupant terminates in API
+   endpoints (ComfyUI-to-API is api-only by design) or a session on
+   THEIR cloud (RunComfy). Nobody gives your own frontend a
+   per-queue destination where the live experience is identical
+   because it is the same client pointed elsewhere.
+2. PROVIDER-AGNOSTIC + PEERS. All occupants are single-provider or
+   own-cloud. "Any websocket is a place," tailscale friend's PC
+   included, stands unclaimed.
+3. END-TO-END PROVISIONING. Even RunPod's own tool stops at "here
+   is a Dockerfile, deploy it yourself." One-pinch pod lifecycle
+   (spin up, token, warm volume, auto-stop, cost on the wrist)
+   remains open.
+4. The VR seat, obviously.
+(ComfyUI-Distributed checked too: master-worker PARALLELISM across
+your own machines for batch speed; manual worker setup; not a
+destination picker, not provisioning. Different job; good neighbor.)
+
+Phase revision: R1 shrinks to "extract the manifest for display and
+VRAM sizing, DELEGATE resolution to comfy-cli on the pod." R2's
+provisioner is a thin orchestrator: pod lifecycle + comfy-cli calls
++ token proxy + network volume. R0 unchanged.
+
 ## Money
 
 Affiliate programs are real and disclosure goes in the README:
