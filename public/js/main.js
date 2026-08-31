@@ -2,7 +2,7 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo } from './graph.js';
+import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo, BUILTIN_SCHEMA } from './graph.js';
 import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
@@ -528,6 +528,28 @@ function fuzzyScore(q, type) {
 
 function catOf(t) { return ((SCHEMA[t].category || 'other').split('/')[0] || 'other').toLowerCase(); }
 
+// Suggestion tables in the spirit of the stock frontend's slot defaults:
+// dropping a wire should offer what people actually reach for, not the
+// alphabet. Curated per link type and pull direction.
+const SUGGEST_OUT = {   // pulled forward from an output: likely consumers
+  IMAGE: ['PreviewImage', 'SaveImage', 'VAEEncode', 'ImageScale', 'ImageUpscaleWithModel'],
+  LATENT: ['VAEDecode', 'KSampler', 'LatentUpscale'],
+  MODEL: ['KSampler', 'LoraLoader'],
+  CONDITIONING: ['KSampler'],
+  CLIP: ['CLIPTextEncode', 'CLIPSetLastLayer'],
+  VAE: ['VAEDecode', 'VAEEncode'],
+  MASK: ['InvertMask', 'ImageCompositeMasked'],
+};
+const SUGGEST_IN = {    // pulled backward from an empty input: likely producers
+  MODEL: ['CheckpointLoaderSimple', 'UNETLoader', 'LoraLoader'],
+  CLIP: ['CheckpointLoaderSimple', 'CLIPLoader'],
+  VAE: ['CheckpointLoaderSimple', 'VAELoader'],
+  LATENT: ['EmptyLatentImage', 'VAEEncode', 'KSampler'],
+  IMAGE: ['LoadImage', 'VAEDecode'],
+  CONDITIONING: ['CLIPTextEncode'],
+  MASK: ['LoadImage'],
+};
+
 function paletteMatches(useCat) {
   // no drag = free add (empty hub, core button): every type in the install
   let all = !palette.drag ? Object.keys(SCHEMA)
@@ -540,10 +562,19 @@ function paletteMatches(useCat) {
     return all.map(t => [t, fuzzyScore(q, t)]).filter(([, s]) => s > 0)
       .sort((a, b) => b[1] - a[1]).map(([t]) => t);
   }
+  // Relevance tiers, not the alphabet: this workflow's own types, then the
+  // curated suggestions for the pulled type, then vanilla core nodes, then
+  // the long tail (which is what categories and search are for).
   const inHub = new Set([...palette.hub.graph.nodes.values()].map(n => n.type));
+  const curated = palette.drag
+    ? (palette.drag.mode === 'reverse' ? SUGGEST_IN : SUGGEST_OUT)[palette.drag.type] || []
+    : [];
+  const cIdx = new Map(curated.map((t, i) => [t, i]));
+  const tier = (t) => (inHub.has(t) ? 0 : cIdx.has(t) ? 1 : BUILTIN_SCHEMA[t] ? 2 : 3);
   return all.slice().sort((a, b) => {
-    const ai = inHub.has(a) ? 0 : 1, bi = inHub.has(b) ? 0 : 1;
-    if (ai !== bi) return ai - bi;
+    const ta = tier(a), tb = tier(b);
+    if (ta !== tb) return ta - tb;
+    if (ta === 1) return cIdx.get(a) - cIdx.get(b);
     return (SCHEMA[a].display || a).localeCompare(SCHEMA[b].display || b);
   });
 }
