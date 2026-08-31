@@ -84,6 +84,16 @@ comfyvr itself. Ladder, cheapest first:
    weather. Doubles as run-state theater done by the graph itself.
 3. Full scene subspace claims come later with the pack contract.
 
+Tie-in decided with the user (2026-08-31): the ENV spec targets the
+SCENE INTERFACE from the workspace refactor (design.md, "Scene as a
+class"), so an environment is never only a splat. A spec can name a
+scene class plus parameters (stellar with amber motes), a skybox
+image, a splat, or any future scene module a space pack registers.
+One interface serves the mode system, the env node, and the world
+claim. Heavy environment generation (HYWorld2-class models) is a
+Run On workload for the 1080-bound; the env pack should assume
+remote execution is normal, not exceptional.
+
 ## Why this is the right direction
 
 - It answers "why VR" with things FLAT COMFY CANNOT DO: wearing

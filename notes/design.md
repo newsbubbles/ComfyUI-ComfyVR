@@ -279,31 +279,70 @@ Others worth imagining:
   placements of the same hubs, and the layout sidecar already knows
   how to remember arrangements per mode key.
 
-### Mode anatomy (framing for discussion, 2026-08-31)
+### Workspace and mode anatomy (settled with the user, 2026-08-31)
 
-A mode is a TRIPLE, and the axes are independent:
+Vocabulary first: the WORKSPACE is where your workflows are, the
+whole inhabited space (what the code half-calls "the world"). Hub
+stays the per-workflow object inside it. A workspace has parameters,
+and MODE is one of them, so a future with several workspaces (each
+with its own mode) is already shaped.
+
+A mode is a bundle over independent axes (the user extended the
+tuple): placement policy x locomotion policy x scene x sound pack x
+node theme x hand theme.
 
 1. PLACEMENT POLICY: where hubs live (horizon ring, orrery sphere,
    assembly line, station spine, hyperbolic ball).
 2. LOCOMOTION POLICY: how the wanted thing and the operator meet
-   (fly to it; it rotates to you; you walk the line; you stay and
-   summon). Comfort constraints live on this axis.
-3. SCENE: the dressing and its state displays (see Scenes section).
+   (fly to it; it rotates in; walk the line; stay and summon).
+   Comfort constraints live here.
+3. SCENE: environment dressing and its state displays; see below.
+4. SOUND PACK: audio.js's synth vocabulary as a swappable set.
+5. NODE THEME: panel palette, transparency, accent rules
+   (colorForType and the panel chrome constants).
+6. HAND THEME: the hand style layer (see Hand rendering options).
 
-Hubs, panels, and the interaction grammar are invariant across all
-three, which is what keeps modes cheap. Sensible pairings, not a
-matrix explosion: horizon+fly+space (current), orrery+summon+any
-(voice-first, pairs with the agent), line+walk (one huge workflow),
-station+modules (subgraph-heavy work), holodeck-minimal+any
-(recording and low-end headsets), hyperbolic+browse (library only).
+Modes we ship are PRESETS over these axes; every axis stays
+individually swappable, so users compose their own. Hubs, panels,
+and the interaction grammar are invariant across all of it, which
+is what keeps this cheap.
 
-Open questions to settle in conversation: is mode global or
-per-hub (proposal: global, with per-hub layout preserved per mode
-key); where does switching live (proposal: a wrist row and a
-library row, with a 1s crossfade, never a continuous morph in VR);
-per-device defaults (desktop might default horizon, headset might
-prefer orrery once it exists); and whether scene follows mode or
-stays a free choice (proposal: free choice, modes only SUGGEST).
+SCENE AS A CLASS (decision): a scene is a code module owning
+init/update/dispose of exactly what the stellar scene does today,
+the starfield, the motes, fog, ambient light. First refactor step
+is extraction, not invention: scenes/stellar.js becomes the
+reference implementation of the interface, and the current code
+moves there unchanged. Placement policy and themes are SIBLING
+components, deliberately NOT inside scene, because independence is
+what makes combination free; the workspace holds one of each.
+Current-code inventory for the extraction: starfield + motes
+(scene), ring math in boot/openWorkflow (placement), palette and
+panel chrome (node theme), audio synth params (sound pack),
+handViz (hand theme).
+
+## North star: programmable matter (2026-08-31)
+
+Substrate, the UI this space descends from, was a programmable
+matter concept, and comfyvr at its best FEELS like that: the
+workflows are matter compilers. They make images, video, places,
+things, and soon things you wear, and with Run On they do it even
+when the local GPU cannot. The long game is a space whose contents
+were all made by the space.
+
+## Galleries must stick (spec, 2026-08-31)
+
+Stock comfy keeps an output bar until server restart; we currently
+lose galleries on every restart, which is strictly worse and now
+bites daily. Mechanism to beat both, from the output DIR instead of
+memory: listOutputFiles already exists; comfy PNGs embed their
+prompt/workflow (we already parse those chunks for drag-drop); so
+scan, read PNG text chunks (Range requests for headers), and hang
+files on hubs via the same signature matcher backfillHistory uses.
+Non-PNG outputs (video, glb, spz) match by adjacency (same prefix
+and counter as a matched PNG batch) or land on an UNMATCHED shelf
+at the library. Result: galleries survive full restarts, better
+than stock. Cap per hub, newest first, instant placement (no
+firework on boot).
 
 ## Scenes (noted 2026-08-30)
 
