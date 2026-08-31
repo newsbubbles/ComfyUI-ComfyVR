@@ -1280,6 +1280,9 @@ function setStatus() {
   statusChip.textContent = client.mode === 'live' ? '● LIVE ' + (client.backend || '') + q : '◌ DEMO — no ComfyUI backend';
   wrist?.panel.dirty();
   statusChip.className = client.mode;
+  // the demo is a storefront: visitors need the way home to the repo
+  const gh = document.getElementById('ghlink');
+  if (gh) gh.style.display = client.mode === 'demo' ? 'flex' : 'none';
 }
 
 // ---------- boot ----------
