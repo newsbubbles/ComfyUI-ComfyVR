@@ -10,6 +10,7 @@ import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summ
 import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
+import { getSetting, setSetting } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -207,18 +208,19 @@ const canvas = renderer.domElement;
 // return instead. Start time is long and jittered, re-rolled per episode.
 let idleReturn = null;
 let idleHover = null;
-let idleDelayMs = 60000 + Math.random() * 30000;
+const rollIdleDelay = () => getSetting('idleDelayS') * 1000 * (1 + Math.random() * 0.5);
+let idleDelayMs = rollIdleDelay();
 function idleComeBack() {
   if (!idleReturn) return;
   const r = idleReturn;
   idleReturn = null; idleHover = null;
-  idleDelayMs = 60000 + Math.random() * 30000;
+  idleDelayMs = rollIdleDelay();
   cam.level = r.level; cam.hub = r.hub;
   const drifted = cam.pos.distanceTo(r.pos) > 1 || Math.abs(cam.yaw - r.yaw) > 0.05;
   if (drifted) flyTo(r.pos, r.look, 0.9);
   else { cam.pos.copy(r.pos); syncAngles(r.look); }   // barely moved: just snap
 }
-function idleAbandon() { idleReturn = null; idleHover = null; idleDelayMs = 60000 + Math.random() * 30000; }
+function idleAbandon() { idleReturn = null; idleHover = null; idleDelayMs = rollIdleDelay(); }
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!e.isPrimary) return;   // a second touch must not fight the first over the camera
@@ -355,6 +357,7 @@ addEventListener('keydown', (e) => {
   idleAbandon();   // keyboard = manual control from wherever you are
   if (e.key === 'Escape') {
     if (palette) { closePalette(); return; }
+    if (settingsPanel) { closeSettings(); return; }
     if (browser) { closeBrowser(); return; }
     if (galleryCard) { hideGalleryCard(); return; }
     stepBack(); return;
@@ -378,7 +381,7 @@ addEventListener('keydown', (e) => {
       return;
     }
   }
-  if (e.key === 'm' || e.key === 'M') { audio.setMuted(!audio.muted); flashHint(audio.muted ? 'muted' : 'sound on'); return; }
+  if (e.key === 'm' || e.key === 'M') { audio.setMuted(!audio.muted); setSetting('muted', audio.muted); flashHint(audio.muted ? 'muted' : 'sound on'); return; }
   keys.add(e.key.toLowerCase());
   if (['w', 'a', 's', 'd', 'q', 'e'].includes(e.key.toLowerCase())) { cam.anim = null; cam.dock = null; if (cam.level === 'panel') cam.level = 'hub'; }
 });
@@ -684,6 +687,7 @@ function buildLibrary() {
       readoutRow(() => `${wfIndex.length} workflows`, () => `${hubs.length} open`),
       buttonRow('⌸ BROWSE', () => openBrowser()),
       buttonRow('✚ NEW WORKFLOW', () => newWorkflow()),
+      buttonRow('⚙ SETTINGS', () => openSettings()),
     ],
   });
   libraryPanel.placeFlat(scene, new THREE.Vector3(0, 0, 0));
@@ -791,6 +795,72 @@ function closeBrowser() {
   if (hotPanel === browser.panel) hotPanel = null;
   browser.panel?.dispose();
   browser = null;
+}
+
+// ---------- settings: the workspace parameters view ----------
+// Options accumulate here instead of growing hidden constants. Stored per
+// device (localStorage), which is right for knobs like the splat budget.
+let settingsPanel = null;
+function closeSettings() {
+  if (!settingsPanel) return;
+  if (hotPanel === settingsPanel) hotPanel = null;
+  settingsPanel.dispose();
+  settingsPanel = null;
+}
+
+const IDLE_STEPS = [0, 30, 60, 120, 300];          // 0 = off
+const RECALL_STEPS = [0, 1, 2, 3];
+const SPLAT_STEPS = [50000, 150000, 300000, 0];    // 0 = full resolution
+
+function buildSettings(pos) {
+  closeSettings();
+  const cycleRow = (label, k, steps, apply) => buttonRow(label, () => {
+    const cur = getSetting(k);
+    const next = steps[(steps.indexOf(cur) + 1) % steps.length];
+    setSetting(k, next);
+    apply?.(next);
+    buildSettings(pos);
+    audio.tick();
+  });
+  const idleS = getSetting('idleWalk') ? getSetting('idleDelayS') : 0;
+  const rows = [
+    readoutRow(() => 'saved on this device', () => ''),
+    buttonRow(getSetting('muted') ? '○ SOUND OFF' : '● SOUND ON', () => {
+      setSetting('muted', !getSetting('muted'));
+      audio.setMuted(getSetting('muted'));
+      buildSettings(pos);
+    }),
+    buttonRow(`☾ IDLE WALK · ${idleS ? idleS + 'S' : 'OFF'}`, () => {
+      const next = IDLE_STEPS[(IDLE_STEPS.indexOf(idleS) + 1) % IDLE_STEPS.length];
+      setSetting('idleWalk', next > 0);
+      if (next > 0) setSetting('idleDelayS', next);
+      idleAbandon();   // re-roll the timer under the new value
+      buildSettings(pos);
+      audio.tick();
+    }),
+    cycleRow(`⟲ RECALL LATEST · ${getSetting('recallLatest') || 'OFF'}`, 'recallLatest', RECALL_STEPS, null),
+    cycleRow(`❖ VR SPLAT BUDGET · ${getSetting('splatBudget') ? Math.round(getSetting('splatBudget') / 1000) + 'K' : 'FULL'}`, 'splatBudget', SPLAT_STEPS, null),
+  ];
+  const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true });
+  panel.placeFlat(scene, pos);
+  panel.mesh.userData.palette = true;   // always reachable, like the pickers
+  panel.dirty();
+  settingsPanel = panel;
+}
+
+function openSettings() {
+  closeBrowser();
+  closePalette();
+  let pos;
+  if (renderer.xr.isPresenting) {
+    const head = camera.getWorldPosition(new THREE.Vector3());
+    const dir = camera.getWorldDirection(new THREE.Vector3());
+    pos = head.addScaledVector(dir, 8);
+  } else {
+    pos = cam.pos.clone().add(forward().multiplyScalar(11));
+  }
+  buildSettings(pos);
+  audio.accrete();
 }
 
 // ---------- provenance card: what made this image ----------
@@ -1321,6 +1391,7 @@ function hubOpts() {
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onAddNode: (h) => openPaletteFree(h),
+    onRecall: (h) => recallMore(h).catch((e) => flashHint('recall failed: ' + (e.message || e))),
     onQueue: (h) => queueHub(h).catch(() => {}),   // errors already shown in-space
     onSave: async (h) => {
       // userdata/dropped hubs save a LOCAL copy — never overwrite the
@@ -1333,6 +1404,7 @@ function hubOpts() {
 }
 
 async function boot() {
+  audio.setMuted(getSetting('muted'));
   await client.detect();
   setStatus();
   client.onModeChange = setStatus;
@@ -1386,7 +1458,9 @@ async function boot() {
   $('veil').classList.add('gone');
   flashHint('drag look · wasd/qe drift · click sigils/panels · drag headers to move nodes · drop a comfy png · esc back · m mute');
 
-  backfillHistory().catch((e) => console.warn('history backfill', e));
+  backfillHistory().catch((e) => console.warn('history backfill', e))
+    .then(() => recallFromDisk())          // after history, so dedupe sees it
+    .catch((e) => console.warn('disk recall', e));
   recallShowcase().catch((e) => console.warn('showcase recall', e));
 
   // J0 agent bridge: the page answers tool calls relayed by the server
@@ -1406,12 +1480,12 @@ async function boot() {
 // workflow run. Interim scaffolding until disk-wide gallery recall lands.
 async function recallShowcase() {
   const files = await client.listOutputFiles();
-  const demos = files.filter(f => /^cvr_demo_/i.test(f) && MESH_EXT.test(f));
+  const demos = files.filter(f => /^cvr_demo_/i.test(f.filename) && MESH_EXT.test(f.filename));
   if (!demos.length || !hubs.length) return;
   const hub = hubs[0];
   let added = 0;
   for (const f of demos) {
-    if (hub.addAsset({ filename: f, subfolder: '', type: 'output' }, { instant: true })) added++;
+    if (hub.addAsset({ filename: f.filename, subfolder: '', type: 'output' }, { instant: true })) added++;
   }
   if (added) flashHint(`showcase: ${added} demo asset${added > 1 ? 's' : ''} on ${hub.name}`);
 }
@@ -1449,7 +1523,8 @@ async function backfillHistory() {
       for (const im of out.images || []) {
         if (im.type !== 'output' || hub.gallery.length >= 8) continue;
         try {
-          hub.addGeneration(await client.imageBitmap(im), '', { instant: true, meta });
+          const item = hub.addGeneration(await client.imageBitmap(im), '', { instant: true, meta });
+          item.media = im;   // filename rides along so disk recall can dedupe
           recalled++;
         } catch (err) { /* image may have been deleted from disk */ }
       }
@@ -1467,6 +1542,88 @@ async function backfillHistory() {
     }
   }
   if (recalled) flashHint(`${recalled} generation${recalled > 1 ? 's' : ''} recalled from history`);
+}
+
+// ---------- disk recall: the output folder is the durable gallery ----------
+// History dies with the ComfyUI process, but the PNGs on disk carry their
+// api prompt in a tEXt chunk. Scan newest-first (headers only, via Range),
+// match prompts to open hubs by node signature, hang just the LATEST few
+// per hub, and index the rest for the core panel's RECALL row.
+const diskIndex = new Map();   // hub -> older unhung entries, newest-first
+
+function hubSig(h) {
+  const s = new Set();
+  for (const n of h.graph.nodes.values()) {
+    s.add(`${n.id}:${n.type}`);
+    if (n.subgraph) s.add(`${n.id}:*`);   // flattened runs emit parent:child ids
+  }
+  return s;
+}
+
+function matchHubByPrompt(sigs, prompt) {
+  const keys = Object.entries(prompt).map(([id, n]) => ({
+    exact: `${id}:${n.class_type}`,
+    sub: `${String(id).split(':')[0]}:*`,
+  }));
+  if (!keys.length) return null;
+  let best = -1, bestScore = 0;
+  sigs.forEach((s, i) => {
+    const score = keys.filter(k => s.has(k.exact) || s.has(k.sub)).length / keys.length;
+    if (score > bestScore) { bestScore = score; best = i; }
+  });
+  return bestScore >= 0.7 ? hubs[best] : null;
+}
+
+async function pngPrompt(media) {
+  try {
+    const r = await fetch(client.viewURL(media), { headers: { Range: 'bytes=0-65535' } });
+    const chunks = pngTextChunks(await r.arrayBuffer());
+    return chunks.prompt ? JSON.parse(chunks.prompt) : null;
+  } catch (e) { return null; }   // truncated chunk, deleted file, non-comfy png
+}
+
+async function hangDiskItem(hub, entry) {
+  const sub = entry.subfolder || '';
+  if (hub.gallery.some(g => g.media?.filename === entry.filename && (g.media?.subfolder || '') === sub)) return false;
+  try {
+    const media = { filename: entry.filename, subfolder: sub, type: 'output' };
+    const item = hub.addGeneration(await client.imageBitmap(media), '', { instant: true, meta: summarizeApi(entry.prompt) });
+    item.media = media;
+    return true;
+  } catch (e) { return false; }
+}
+
+async function recallFromDisk() {
+  const want = getSetting('recallLatest');
+  const pngs = (await client.listOutputFiles()).filter(f => f.type === 'output' && /\.png$/i.test(f.filename));
+  if (!pngs.length || !hubs.length) return;
+  const sigs = hubs.map(hubSig);
+  const hungPer = new Map();
+  let hung = 0;
+  const SCAN_CAP = 160, BATCH = 8;   // bounded boot work; RECALL pages deeper
+  for (let at = 0; at < Math.min(pngs.length, SCAN_CAP); at += BATCH) {
+    const batch = pngs.slice(at, at + BATCH);
+    const prompts = await Promise.all(batch.map(pngPrompt));
+    for (let i = 0; i < batch.length; i++) {
+      if (!prompts[i]) continue;
+      const hub = matchHubByPrompt(sigs, prompts[i]);
+      if (!hub) continue;
+      const entry = { ...batch[i], prompt: prompts[i] };
+      const n = hungPer.get(hub) || 0;
+      if (want && n < want && await hangDiskItem(hub, entry)) { hungPer.set(hub, n + 1); hung++; }
+      else { if (!diskIndex.has(hub)) diskIndex.set(hub, []); diskIndex.get(hub).push(entry); }
+    }
+  }
+  if (hung) flashHint(`${hung} recalled from disk`);
+}
+
+async function recallMore(hub) {
+  const rest = diskIndex.get(hub) || [];
+  if (!rest.length) { flashHint('nothing older on disk for ' + hub.name); return; }
+  let n = 0;
+  for (const entry of rest.splice(0, 6)) if (await hangDiskItem(hub, entry)) n++;
+  flashHint(n ? `${n} more from disk` : 'those were already hanging');
+  audio.accrete();
 }
 
 // ---------- drop a ComfyUI PNG (or workflow .json) into the space ----------
@@ -1684,6 +1841,7 @@ function attachWrist(grip, ci) {
       micRow,
       buttonRow('⌸ WORKFLOWS', () => openBrowser()),
       buttonRow('✚ NEW', () => newWorkflow()),
+      buttonRow('⚙ SETTINGS', () => openSettings()),
       buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
     ];
@@ -1929,7 +2087,7 @@ function tick(dt) {
     if (keys.has('e')) cam.vel.y += spd * dt;
     // idle drift: orbit the current focus, after first remembering the spot
     // and facing the user left, so coming back is free
-    if (performance.now() - lastInput > idleDelayMs) {
+    if (getSetting('idleWalk') && performance.now() - lastInput > idleDelayMs) {
       if (!idleReturn) {
         idleReturn = {
           pos: cam.pos.clone(),
@@ -2039,6 +2197,7 @@ window.CVR = {
   openPalette, openPaletteFree, pal: () => palette,
   newWorkflow, createWorkflow,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
+  openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
   openKbd, kbd: () => kbd, kbdKey,
   hear: (t) => agentApi?.hear(t),
   idleTest: () => { lastInput = performance.now() - idleDelayMs - 1000; },

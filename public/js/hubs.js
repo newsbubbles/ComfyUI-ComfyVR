@@ -266,6 +266,7 @@ export class Hub {
       buttonRow('◈ QUEUE', () => this.opts.onQueue(this)),
       buttonRow('⟳ RESEED · SAVE ⬡', (frac) => (frac < 0.5 ? this.reseed() : this.opts.onSave(this))),
       buttonRow('✚ ADD NODE', () => this.opts.onAddNode?.(this)),
+      buttonRow('⟲ RECALL FROM DISK', () => this.opts.onRecall?.(this)),
       imageRow('latest signal'),
     ];
     this.corePanel = new Panel({ title: this.name, subtitle: 'core', accent: '#7ce8dc', rows, worldWidth: 3.4, billboard: true });

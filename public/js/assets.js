@@ -9,6 +9,7 @@ import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { OBJLoader } from '../vendor/OBJLoader.js';
 import { PLYLoader } from '../vendor/PLYLoader.js';
 import { API } from './comfy.js';
+import { getSetting } from './settings.js';
 
 const SPLAT_EXTS = new Set(['splat', 'ksplat', 'spz']);
 
@@ -25,7 +26,7 @@ async function isGaussianPly(url) {
 // recording steals more of the budget. In XR, .splat files are decimated at
 // load by importance (opacity times volume keeps the visual mass and drops
 // the fine dust); desktop always gets full resolution.
-const XR_SPLAT_BUDGET = 150000;
+const XR_SPLAT_BUDGET = () => getSetting('splatBudget') || Infinity;   // 0 = full resolution
 function decimateSplat(buf, budget) {
   const n = Math.floor(buf.byteLength / 32);   // 32 bytes: pos f32x3, scale f32x3, rgba u8x4, quat u8x4
   if (n <= budget) return buf;
@@ -56,7 +57,7 @@ async function loadSplat(url, ext, xr = false) {
   if (xr && ext === 'splat') {
     try {
       const buf = await (await fetch(url)).arrayBuffer();
-      const cut = decimateSplat(buf, XR_SPLAT_BUDGET);
+      const cut = decimateSplat(buf, XR_SPLAT_BUDGET());
       if (cut !== buf) src = revoke = URL.createObjectURL(new Blob([cut]));
     } catch (e) { /* full resolution beats no splat */ }
   }

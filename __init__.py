@@ -69,6 +69,33 @@ try:
             json.dump(body, fh, indent=1)
         return web.json_response({"saved": name, "mtime": int(time.time())})
 
+    # Recursive output listing for disk recall: ComfyUI's own
+    # /internal/files/output stops at the root, but sample workflows save
+    # into subfolders (comfyvr/, 3d/). Newest first, bounded.
+    @routes.get("/comfyvr/local/outputs")
+    async def cvr_outputs(request):
+        import folder_paths
+        base = folder_paths.get_output_directory()
+        out = []
+        for dirpath, dirnames, filenames in os.walk(base):
+            sub = os.path.relpath(dirpath, base).replace("\\", "/")
+            if sub == ".":
+                sub = ""
+            if sub.startswith("."):
+                continue
+            for f in filenames:
+                try:
+                    out.append({
+                        "filename": f,
+                        "subfolder": sub,
+                        "type": "output",
+                        "mtime": os.path.getmtime(os.path.join(dirpath, f)),
+                    })
+                except OSError:
+                    pass
+        out.sort(key=lambda e: -e["mtime"])
+        return web.json_response(out[:500])
+
     # Layout sidecar: 3D arrangements for workflows we must never write
     # back (userdata stays read-only). Keyed source__name.
     @routes.get("/comfyvr/local/layouts")

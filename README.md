@@ -18,6 +18,11 @@ developer mode needed.
 This is the project from [the "Comfy Workflow Universe" post on
 r/comfyui](https://www.reddit.com/r/comfyui/comments/1w0bt1p/comfy_workflow_universe/).
 
+**Fly it right now, zero install**: the demo at
+[newsbubbles.github.io/ComfyUI-ComfyVR](https://newsbubbles.github.io/ComfyUI-ComfyVR/)
+runs with no backend at all: sample workflows, simulated queues, and
+on a headset the ENTER VR button works straight from that page.
+
 ![constellation](docs/constellation.png)
 ![amphitheater](docs/amphitheater.png)
 ![gallery](docs/gallery.png)
@@ -117,8 +122,15 @@ backend at all so you can explore the space cold.
   `cvr_demo_<name>.splat`, and it appears in the space.
 - **Drop a PNG**: any ComfyUI image dropped into the space unfolds the
   workflow embedded in it as a new hub, with the image on its rim.
-- **History recall**: recent generations find their workflows on load
-  and hang in the right gallery.
+- **Galleries survive restarts**: outputs on disk find their workflows
+  again at boot. Comfy PNGs carry their prompt, so each open workflow
+  rehangs its latest image (how many is a setting), and ⟲ RECALL FROM
+  DISK on the core pages older ones in when you want them. Stock
+  ComfyUI forgets its output feed when the server restarts; the space
+  does not.
+- **Workspace settings**: ⚙ SETTINGS on the wrist, in the library,
+  and in the workflow list: sound, idle drift timing, recall depth,
+  and the VR splat budget, saved per device.
 
 ## VR
 
@@ -217,8 +229,10 @@ What does not work yet, so you know before you fly:
   roadmap.
 - **No undo.** Deletes are confirmed and unsaved changes revert on
   reload, but there is no step-by-step undo yet.
-- **Galleries forget on ComfyUI restart.** History lives in ComfyUI's
-  memory; recall from the output folder on disk is planned.
+- **Only images recall from disk.** 3D, video, and audio outputs come
+  back through live history but are not yet matched from the output
+  folder after a restart; images carry their prompt inside the file,
+  the others do not.
 - **Custom nodes render generically.** Standard widget types (sliders,
   combos, toggles, text) all work; bespoke frontend widgets from node
   packs show as plain values.
@@ -260,8 +274,6 @@ workflows, on a screen or standing inside them. In rough order:
   including wearables: the first demo is generating a new set of
   hands with one workflow, rigging them with another, and then
   wearing them. The core stays a substrate; packs are experiences.
-- A hosted demo you can fly with zero install.
-- Gallery recall across restarts, from the output folder itself.
 - Presence: friends in your constellation over a private network,
   watching the same pulses climb the same wires.
 - The far pile, in no order: 4D (animated) splats, physics for the

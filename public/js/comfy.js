@@ -205,11 +205,24 @@ export class ComfyClient {
   // Everything in ComfyUI's output dir, newest first. The /internal
   // sub-app is NOT covered by ComfyUI's /api alias, so hosted mode hits it
   // bare; standalone rides the proxy's /api strip.
+  // Output listing as {filename, subfolder, type}, newest first. Our own
+  // route (registered by the custom node on the backend) walks subfolders,
+  // which sample workflows save into; ComfyUI's internal listing is the
+  // root-only fallback. Old servers return bare names, v0.34+ appends
+  // " [output]"; both normalize.
   async listOutputFiles() {
     if (this.mode !== 'live') return [];
     try {
+      const r = await fetch(HOSTED ? LOCAL + '/outputs' : API + '/comfyvr/local/outputs');
+      if (r.ok) return await r.json();
+    } catch (e) { /* comfyvr node not installed on the backend */ }
+    try {
       const r = await fetch(HOSTED ? '/internal/files/output' : API + '/internal/files/output');
-      return r.ok ? await r.json() : [];
+      if (!r.ok) return [];
+      return (await r.json()).map(s => {
+        const m = /^(.*) \[(\w+)\]$/.exec(s);
+        return m ? { filename: m[1], subfolder: '', type: m[2] } : { filename: s, subfolder: '', type: 'output' };
+      });
     } catch (e) { return []; }
   }
 
