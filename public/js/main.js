@@ -1005,6 +1005,19 @@ function rebuildSpaceThreads() {
   }
 }
 
+// Every free-floating panel, ONE list: picking, per-frame updates, and
+// title-bar drags all read this. A panel missing from a hardcoded list is
+// invisible or untouchable in ways that only surface in a headset —
+// settings shipped both ways before this existed.
+function floaters() {
+  const out = [];
+  if (palette) out.push(palette.panel);
+  if (browser) out.push(browser.panel);
+  if (kbd) out.push(kbd.panel);
+  if (settingsPanel) out.push(settingsPanel);
+  return out;
+}
+
 function pickTargets() {
   const out = [];
   for (const h of hubs) {
@@ -1013,9 +1026,7 @@ function pickTargets() {
     for (const p of h.panels.values()) if (p.mesh && p.mesh.visible) out.push(p.mesh);
     for (const gi of h.gallery) if (gi.mesh.visible) out.push(gi.mesh);
   }
-  if (palette) out.push(palette.panel.mesh);
-  if (browser) out.push(browser.panel.mesh);
-  if (kbd) out.push(kbd.panel.mesh);
+  for (const p of floaters()) if (p.mesh) out.push(p.mesh);
   if (libraryPanel?.mesh) out.push(libraryPanel.mesh);
   if (wrist?.panel.mesh && renderer.xr.isPresenting) out.push(wrist.panel.mesh);
   return out;
@@ -2053,13 +2064,7 @@ function xrSelectStart(st) {
 }
 
 function floatingPanel(p) {
-  if (!p) return null;
-  if (kbd && p === kbd.panel) return p;
-  if (p === settingsPanel) return p;
-  if (browser && p === browser.panel) return p;
-  if (palette && p === palette.panel) return p;
-  if (p === galleryCard) return p;
-  return null;
+  return p && floaters().includes(p) ? p : null;
 }
 
 function armMoveDrag(st, hit) {
@@ -2252,25 +2257,13 @@ function tick(dt) {
     h.update(dt, t, camWorld);
     h.billboards(camWorld);
   }
-  if (palette) {
-    palette.panel.mesh.lookAt(camWorld);
-    palette.panel.update(t);
-  }
-  if (browser) {
-    browser.panel.mesh.lookAt(camWorld);
-    browser.panel.update(t);
-  }
-  if (kbd) {
-    kbd.panel.mesh.lookAt(camWorld);
-    kbd.panel.update(t);
+  for (const p of floaters()) {
+    p.mesh.lookAt(camWorld);
+    p.update(t);
   }
   if (galleryCard) {
     galleryCard.mesh.lookAt(camWorld);
     galleryCard.update(t);
-  }
-  if (settingsPanel) {
-    settingsPanel.mesh.lookAt(camWorld);
-    settingsPanel.update(t);
   }
   if (libraryPanel) {
     libraryPanel.mesh.lookAt(camWorld);

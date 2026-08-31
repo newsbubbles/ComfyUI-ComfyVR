@@ -450,3 +450,18 @@ Key invariants to preserve:
   dir exercise the 3D materialization path.
 - Longer-term roadmap and deferrals live in `RELEASE.md` and
   `design.md`.
+
+### The floater refactor (due soon, 2026-09-01)
+
+Settings shipped invisible (missing from the per-frame update list)
+and then untouchable (missing from pickTargets). Two hardcoded lists
+plus floatingPanel made three places a floating panel had to be
+enrolled by hand. Interim fix: floaters() in main.js is now the ONE
+list all three read. The real refactor when it is time: Panel
+registers itself on placeFlat/place and unregisters on dispose, so
+existing IS being enrolled — picking, updates, billboarding, and
+drag eligibility all derive from the registry, with per-panel flags
+(billboard, pickable, scale-with-distance) replacing the special
+cases (library, wrist, galleryCard). galleryCard is still outside
+floaters() deliberately: its note row would route into the editor
+with no widget behind it; give notes a readonly flag first.
