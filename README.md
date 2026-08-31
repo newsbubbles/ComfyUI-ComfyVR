@@ -170,7 +170,7 @@ requires a secure context, and there are three ways to get one:
 | Look / aim | drag mouse | point | point |
 | Move | WASD + QE, wheel | left stick fly, right stick turn | pinch empty space and pull |
 | Click | left click | trigger | pinch |
-| Move a node | drag its title bar | hold trigger on title bar | pinch and hold title bar |
+| Move a node | drag its title bar | hold trigger on it and move | pinch it and move |
 | Rewire | drag a port dot | hold trigger on port dot | pinch and hold port dot |
 | Add a node | drop a wire from any port into space, or ✚ ADD NODE on the core | same, by ray | same, by pinch |
 | New workflow | ✚ NEW in the library or workflow list | ✚ NEW on the wrist | same |

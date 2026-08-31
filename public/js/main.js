@@ -1916,12 +1916,7 @@ function xrSelectStart(st) {
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
     if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) {
       if (inDeleteZone(hit)) { armOrDelete(hit.panel, hit.hub); return; }
-      setRayFromController(st.c);
-      const p = hit.panel;
-      const at = rayCylinder(hit.hub, p.placement.r);
-      moveDrag = { hub: hit.hub, panel: p, id: p.userData.nodeId, offT: at ? wrapAng(p.placement.theta - at.theta) : 0, offY: at ? p.placement.y - at.y : 0 };
-      st.mode = 'move';
-      audio.tick();
+      armMoveDrag(st, hit);
       return;
     }
     if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null && !linkDrag) {
@@ -1967,14 +1962,38 @@ function xrSelectStart(st) {
     return;
   }
   if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
-  if (hit.panel && hit.hub) dockToPanel(hit.panel, hit.hub);
+  if (hit.panel && hit.hub) {
+    // a NODE panel's body up close: motion decides. A still pinch is a
+    // click (dock, as ever); a moving hand is a grab, and in VR grabbing
+    // the thing anywhere should move it — header-only grabs are a mouse
+    // habit. Distant pinches still dock instantly (grabs only arm close).
+    if (vrReach && hit.panel.userData?.nodeId != null && !moveDrag) {
+      st.mode = 'maybe-move';
+      st.pressStart = st.c.position.clone();
+      st.pressHit = hit;
+      return;
+    }
+    dockToPanel(hit.panel, hit.hub);
+  }
+}
+
+function armMoveDrag(st, hit) {
+  setRayFromController(st.c);
+  const p = hit.panel;
+  const at = rayCylinder(hit.hub, p.placement.r);
+  moveDrag = { hub: hit.hub, panel: p, id: p.userData.nodeId, offT: at ? wrapAng(p.placement.theta - at.theta) : 0, offY: at ? p.placement.y - at.y : 0 };
+  st.mode = 'move';
+  audio.tick();
 }
 
 function xrSelectEnd(st) {
   if (st.mode === 'link' && linkDrag) finishLink(st.hit);
   if (st.mode === 'move') endMove();
   if (st.mode === 'slider') audio.tick();
-  st.mode = null;
+  if (st.mode === 'maybe-move' && st.pressHit) {
+    dockToPanel(st.pressHit.panel, st.pressHit.hub);   // a still pinch was a click all along
+  }
+  st.mode = null; st.pressHit = null; st.pressStart = null;
   dragMode = null; sliderDrag = null; pendingGrab = null;
 }
 
@@ -1986,6 +2005,14 @@ function xrControllersTick() {
       _v3.copy(st.pullLast).sub(st.c.position).applyAxisAngle(UP, xrState.yaw);
       cam.pos.addScaledVector(_v3, 4);
       st.pullLast.copy(st.c.position);
+      st.dot.visible = false;
+      continue;
+    }
+    if (st.mode === 'maybe-move') {
+      // ~2.5cm of hand travel while pinched = a deliberate grab
+      if (!moveDrag && st.pressStart && st.c.position.distanceTo(st.pressStart) > 0.025) {
+        armMoveDrag(st, st.pressHit);
+      }
       st.dot.visible = false;
       continue;
     }
