@@ -1001,7 +1001,13 @@ function pickRay() {
   return { object: h.object, panel, hub, gallery, rowInfo, dist: h.distance, uv: h.uv };
 }
 
-function reachable(hit) { return hit.dist < 10 || !!hit.object.userData.palette || !!hit.object.userData.library; }
+// The boundary between TRAVEL and TOUCH: inside it, clicks and pinches act
+// on the surface (grab, edit, delete); beyond it they take you there.
+// Generous on purpose: repositioning nodes wants enough standoff to keep
+// the workflow's context in view while you drag.
+const REACH = 16;      // desktop
+const REACH_XR = 21;   // headset rays are shakier; touch reaches further
+function reachable(hit) { return hit.dist < REACH || !!hit.object.userData.palette || !!hit.object.userData.library; }
 
 // Right corner of a node header is the ✕: tap to arm, tap again to delete.
 function inDeleteZone(hit) {
@@ -1910,7 +1916,7 @@ function xrSelectStart(st) {
     st.pullLast = st.c.position.clone();
     return;
   }
-  const vrReach = hit.dist < 14 || !!hit.object.userData.palette || !!hit.object.userData.library;
+  const vrReach = hit.dist < REACH_XR || !!hit.object.userData.palette || !!hit.object.userData.library;
   const ri = hit.rowInfo;
   if (vrReach && ri) {
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
@@ -2031,7 +2037,7 @@ function xrControllersTick() {
       st.rayLine.scale.z = Math.max(0.3, hit.dist);
       st.dot.visible = true;
       st.dot.position.copy(raycaster.ray.at(hit.dist, _v3));
-      if (hit.panel && hit.rowInfo?.row && hit.dist < 14) {
+      if (hit.panel && hit.rowInfo?.row && hit.dist < REACH_XR) {
         if (hit.panel.hot !== hit.rowInfo.row) audio.tick();
         hit.panel.setHot(hit.rowInfo.row);
         hit.panel.setHotFrac(hit.rowInfo.frac);
