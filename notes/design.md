@@ -185,8 +185,40 @@ later is a hand STYLE option, all driven by the same 25 joints:
 - **Plain grey hands**: a quiet, neutral option for people who want
   normal-looking hands, and for videos where the audience should read
   "hands" instantly with zero explanation.
+- **Spaghetti hands** (user request 2026-08-31): bones as wobbly
+  noodles, verlet-ish lag so fingers overshoot and settle. Pure joy
+  feature, and a good stress test of the style layer since it needs
+  per-frame physics on the same 25 joints.
 - **Mesh hands** last: real skinned hands fight the holographic
-  aesthetic and cost the most.
+  aesthetic and cost the most. UPDATE 2026-08-31: mesh hands stop
+  being a style and become the WEARABLE layer once generated hands
+  exist; see notes/space-packs.md. Hand styles are the first
+  consumers of that layer, current joints rendering is the default
+  style.
+
+## Image pickers on every image widget (noted 2026-08-31)
+
+Anywhere a panel shows an image preview for a widget flagged
+imageInput (LoadImage and friends), pinching the image should offer
+a source browse. Sources, easiest first:
+
+1. **Server-side browse**: page through the input dir (and outputs)
+   as thumbnails in a picker panel; pure comfy API, works in VR
+   today, no platform tricks. Ship this first.
+2. **USE AS INPUT from the gallery**: pinch any gallery output and
+   point it at an image widget. This is the workflow-chaining
+   bridge (t2i output feeding img2img or make-vr-asset input) and
+   costs one upload call; img2img-remix plus a screenshot already
+   demos the loop.
+3. **Headset gallery / file picker**: WebXR has NO native file
+   picker inside an immersive session. Reality: an <input
+   type=file> click works in the Quest browser 2D page (picker
+   reaches headset storage and camera roll), so the flow is either
+   (a) session pauses to the 2D page for the pick and re-enters, or
+   (b) dom-overlay, which Quest browser supports for immersive-ar
+   and only inconsistently for vr; needs a field test before we
+   promise it. Design for (a) with a polite "stepping out to pick"
+   flash, treat (b) as an upgrade if it tests well.
 
 ## World layout modes (noted 2026-08-30)
 

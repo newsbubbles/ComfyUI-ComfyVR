@@ -242,17 +242,30 @@ workflows, on a screen or standing inside them. In rough order:
   five TripoSplat model files). Queue it, pinch the placard,
   walk around the result. Next: dictating the prompt end to end and
   more blessed workflows.
+- Run On: pick where a workflow runs when you queue it. Local is one
+  choice; a cloud GPU pod (RunPod and friends) or another machine of
+  yours are others, with the pod provisioned automatically from what
+  the workflow file itself declares it needs, and visible in the
+  space as a place of its own while it burns. So a laptop with an old
+  GPU can still run the heavy 3D workflows it can see.
 - Groups rendered as amphitheater wedges, so a workflow's own
   organization survives into space.
-- Image upload from inside the headset. The browser file picker on
-  Quest reaches headset storage, so feeding a LoadImage node from the
-  headset gallery is a real path.
+- Image pickers everywhere: pinch any image widget to browse the
+  server's images, point any gallery output at another workflow's
+  input (generate, then remix or 3D-ify what you made, without
+  leaving), and reach the headset's own gallery where the browser
+  allows it.
+- Space packs: node packs that extend the space itself, not just the
+  graph. New output types with their own behavior in the world,
+  including wearables: the first demo is generating a new set of
+  hands with one workflow, rigging them with another, and then
+  wearing them. The core stays a substrate; packs are experiences.
 - A hosted demo you can fly with zero install.
 - Gallery recall across restarts, from the output folder itself.
 - Presence: friends in your constellation over a private network,
   watching the same pulses climb the same wires.
-- The far pile, in no order: node packs that act inside the 3D
-  environment itself, 4D (animated) splats, physics for the things
-  you generate, semantic node search.
+- The far pile, in no order: 4D (animated) splats, physics for the
+  things you generate, semantic node search, rigging and animation
+  bays inside the space.
 
 Built with three.js. Not affiliated with Comfy Org.
