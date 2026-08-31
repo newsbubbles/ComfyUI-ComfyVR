@@ -341,8 +341,27 @@ files on hubs via the same signature matcher backfillHistory uses.
 Non-PNG outputs (video, glb, spz) match by adjacency (same prefix
 and counter as a matched PNG batch) or land on an UNMATCHED shelf
 at the library. Result: galleries survive full restarts, better
-than stock. Cap per hub, newest first, instant placement (no
-firework on boot).
+than stock.
+
+REFINED with the user (2026-08-31): recall is LAZY, never an
+archive dump. On boot, each hub hangs only its LATEST output (one
+image, instant, no firework); the scan indexes the rest without
+loading pixels. "We want it when we want it": a RECALL row on the
+gallery (or core) pages older outputs in on demand, and closing
+the hub drops them again. How many auto-recall (0, 1, N) is a
+setting, not a constant.
+
+## Settings screen (noted 2026-08-31)
+
+Options are accumulating with no home: gallery recall depth, splat
+budget, idle walk on/off and delay, hand style, scene, sound mute,
+and eventually mode. This is really the WORKSPACE PARAMETERS view,
+so build it as that from day one: a settings panel reachable from
+the library (desktop overlay like the editor; in VR a panel like
+the browser), backed by the same sidecar pattern as layouts
+(server file when there is a server, localStorage in the static
+demo). Each new subsystem registers its options instead of growing
+new constants; modes later become presets over the same store.
 
 ## Scenes (noted 2026-08-30)
 
