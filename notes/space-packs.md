@@ -59,6 +59,22 @@ become the first consumers of the wearable layer, so the layer
 ships with content on day one. Current handViz (25 glowing joints)
 becomes just the default style.
 
+RUNG ONE SHIPPED (2026-09-01): wearables.js drives per-phalanx rigid
+segments from the joint poses; ✋ HANDS in settings switches
+dots/robot; desktop tests via a fake open-palm rig (CVR.wearDemo).
+KEY SIMPLIFICATION found on the way: hands do not need UniRig at
+all. Auto-riggers invent a skeleton, but our target skeleton is
+FIXED (the XRHand joints), so a generated hand mesh only needs SKIN
+WEIGHTS around a template armature: fit the canonical skeleton to
+the mesh (scale to bounds, canonical generation pose in the prompt)
+and let Blender's automatic weights do the rest. The bone-map node
+dissolves; the rig-fit script replaces it. Remaining bricks:
+(2) blender headless rig-fit script, testable on any hand mesh;
+(3) make-hands workflow (t2i then Hunyuan3D image-to-mesh; nodes in
+core, model files to D: like TripoSplat); (4) cvr_hands_*.glb
+output convention, placard offers WEAR, skinned-glb driver joins
+wearables.js beside the rigid one.
+
 Chaining note: steps 1-3 chain through images and meshes that today
 must round-trip through the output folder. Two bridging affordances
 make it fluid: USE AS INPUT on any gallery image (pinch an output,
