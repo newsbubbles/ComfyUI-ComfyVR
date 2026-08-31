@@ -819,13 +819,15 @@ const RECALL_STEPS = [0, 1, 2, 3];
 const SPLAT_STEPS = [50000, 150000, 300000, 0];    // 0 = full resolution
 
 function buildSettings(pos) {
+  // rebuild where the panel actually is: the user may have moved it
+  const rebuild = () => buildSettings(settingsPanel ? settingsPanel.mesh.position.clone() : pos);
   closeSettings();
   const cycleRow = (label, k, steps, apply) => buttonRow(label, () => {
     const cur = getSetting(k);
     const next = steps[(steps.indexOf(cur) + 1) % steps.length];
     setSetting(k, next);
     apply?.(next);
-    buildSettings(pos);
+    rebuild();
     audio.tick();
   });
   const idleS = getSetting('idleWalk') ? getSetting('idleDelayS') : 0;
@@ -834,14 +836,14 @@ function buildSettings(pos) {
     buttonRow(getSetting('muted') ? '○ SOUND OFF' : '● SOUND ON', () => {
       setSetting('muted', !getSetting('muted'));
       audio.setMuted(getSetting('muted'));
-      buildSettings(pos);
+      rebuild();
     }),
     buttonRow(`☾ IDLE WALK · ${idleS ? idleS + 'S' : 'OFF'}`, () => {
       const next = IDLE_STEPS[(IDLE_STEPS.indexOf(idleS) + 1) % IDLE_STEPS.length];
       setSetting('idleWalk', next > 0);
       if (next > 0) setSetting('idleDelayS', next);
       idleAbandon();   // re-roll the timer under the new value
-      buildSettings(pos);
+      rebuild();
       audio.tick();
     }),
     cycleRow(`⟲ RECALL LATEST · ${getSetting('recallLatest') || 'OFF'}`, 'recallLatest', RECALL_STEPS, null),
@@ -1919,6 +1921,15 @@ function xrSelectStart(st) {
   const vrReach = hit.dist < REACH_XR || !!hit.object.userData.palette || !!hit.object.userData.library;
   const ri = hit.rowInfo;
   if (vrReach && ri) {
+    // floating panels (keyboard, settings, pickers, provenance) move by
+    // their title bar: pinch it and the panel rides the ray at its distance
+    if (ri.kind === 'header' && floatingPanel(hit.panel)) {
+      st.mode = 'float';
+      st.floatPanel = hit.panel;
+      st.floatDist = hit.dist;
+      audio.tick();
+      return;
+    }
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
     if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) {
       if (inDeleteZone(hit)) { armOrDelete(hit.panel, hit.hub); return; }
@@ -1983,6 +1994,16 @@ function xrSelectStart(st) {
   }
 }
 
+function floatingPanel(p) {
+  if (!p) return null;
+  if (kbd && p === kbd.panel) return p;
+  if (p === settingsPanel) return p;
+  if (browser && p === browser.panel) return p;
+  if (palette && p === palette.panel) return p;
+  if (p === galleryCard) return p;
+  return null;
+}
+
 function armMoveDrag(st, hit) {
   setRayFromController(st.c);
   const p = hit.panel;
@@ -1999,7 +2020,7 @@ function xrSelectEnd(st) {
   if (st.mode === 'maybe-move' && st.pressHit) {
     dockToPanel(st.pressHit.panel, st.pressHit.hub);   // a still pinch was a click all along
   }
-  st.mode = null; st.pressHit = null; st.pressStart = null;
+  st.mode = null; st.pressHit = null; st.pressStart = null; st.floatPanel = null;
   dragMode = null; sliderDrag = null; pendingGrab = null;
 }
 
@@ -2011,6 +2032,17 @@ function xrControllersTick() {
       _v3.copy(st.pullLast).sub(st.c.position).applyAxisAngle(UP, xrState.yaw);
       cam.pos.addScaledVector(_v3, 4);
       st.pullLast.copy(st.c.position);
+      st.dot.visible = false;
+      continue;
+    }
+    if (st.mode === 'float' && st.floatPanel) {
+      const p = floatingPanel(st.floatPanel);   // may have been rebuilt away
+      if (p) {
+        p.mesh.position.copy(raycaster.ray.at(st.floatDist, _v3));
+        // pickers rebuild their panels in place; keep their anchor with it
+        if (browser && p === browser.panel) browser.pos.copy(p.mesh.position);
+        if (palette && p === palette.panel) palette.pos.copy(p.mesh.position);
+      }
       st.dot.visible = false;
       continue;
     }
@@ -2037,6 +2069,9 @@ function xrControllersTick() {
       st.rayLine.scale.z = Math.max(0.3, hit.dist);
       st.dot.visible = true;
       st.dot.position.copy(raycaster.ray.at(hit.dist, _v3));
+      // the cursor dot shrinks on near surfaces (the wrist watch especially):
+      // full size at 4+ units, a quarter size when touching-close
+      st.dot.scale.setScalar(THREE.MathUtils.clamp(hit.dist / 4, 0.25, 1));
       if (hit.panel && hit.rowInfo?.row && hit.dist < REACH_XR) {
         if (hit.panel.hot !== hit.rowInfo.row) audio.tick();
         hit.panel.setHot(hit.rowInfo.row);
@@ -2174,6 +2209,10 @@ function tick(dt) {
   if (galleryCard) {
     galleryCard.mesh.lookAt(camWorld);
     galleryCard.update(t);
+  }
+  if (settingsPanel) {
+    settingsPanel.mesh.lookAt(camWorld);
+    settingsPanel.update(t);
   }
   if (libraryPanel) {
     libraryPanel.mesh.lookAt(camWorld);

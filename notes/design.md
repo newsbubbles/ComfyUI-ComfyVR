@@ -196,6 +196,19 @@ later is a hand STYLE option, all driven by the same 25 joints:
   consumers of that layer, current joints rendering is the default
   style.
 
+## Fingertip poke (field request 2026-09-01)
+
+Any fingertip on either hand should press what it touches when close
+enough, alongside the ray+pinch. We already track all 25 joints per
+hand with world positions and radii (handViz), so the mechanics are:
+per tip (5 x 2), distance to each nearby panel's surface; within
+touch distance, drive the same hover path the ray uses (setHot at
+the touched row, dot feedback at quarter size); crossing a small
+press threshold fires interact() for that row, with a debounce so
+one poke is one press. Wrist watch first (it is in arm's reach by
+definition), then the keyboard, where poke-typing is the obvious
+win over ray-typing. Ray and poke coexist; nearest-signal wins.
+
 ## Image pickers on every image widget (noted 2026-08-31)
 
 Anywhere a panel shows an image preview for a widget flagged
