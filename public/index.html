@@ -78,9 +78,22 @@
   </div>
   <div id="veil">
     <h1>COMFYVR</h1>
-    <p>fly through your workflows</p>
+    <p id="veil-line">fly through your workflows</p>
   </div>
 </div>
+<script>
+  // veil taglines: the sincere one appears twice so it leads the rotation
+  (function () {
+    var lines = [
+      'fly through your workflows',
+      'fly through your workflows',
+      'more complicated than yesterday, but less than tomorrow',
+      'making something that was already complicated even more complicated',
+      'mogging tony stark on a daily',
+    ];
+    document.getElementById('veil-line').textContent = lines[Math.floor(Math.random() * lines.length)];
+  })();
+</script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>
