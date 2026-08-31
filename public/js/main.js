@@ -1425,7 +1425,12 @@ async function boot() {
       const json = await client.loadLocalWorkflow(item.name);
       // empty nodes is a real (just-created) workflow, not junk
       if (Array.isArray(json.nodes)) jsons.push({ name: item.name, json, source: 'local' });
-    } catch (e) { fail(`load ${item.name}: ${e}`); }
+    } catch (e) {
+      // live mode: the red box, someone can act on it. Demo: a stranger's
+      // first impression should not be a parse error over the stars.
+      if (client.mode === 'live') fail(`load ${item.name}: ${e}`);
+      else console.warn('demo workflow skipped', item.name, e);
+    }
   }
   // the user's real workflows, saved server-side by the ComfyUI frontend
   const userdata = await client.listUserdataWorkflows();

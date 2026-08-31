@@ -151,7 +151,15 @@ export class ComfyClient {
       const r = await fetch(LOCAL + '/workflows/' + encodeURIComponent(name));
       if (r.ok) return await r.json();
     } catch (e) { /* static hosting */ }
-    return await (await fetch('workflows/' + encodeURIComponent(name) + '.json')).json();
+    // static path, with one retry: a CDN edge can serve a stale 404 right
+    // after a fresh deploy, and its HTML must never reach JSON.parse
+    const url = 'workflows/' + encodeURIComponent(name) + '.json';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await fetch(url).catch(() => null);
+      if (r?.ok) return await r.json();
+      if (attempt === 0) await new Promise(res => setTimeout(res, 700));
+    }
+    throw new Error(`${url} unavailable`);
   }
 
   async saveLocalWorkflow(name, json) {
