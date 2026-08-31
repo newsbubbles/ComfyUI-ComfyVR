@@ -11,6 +11,7 @@ import { toggleAsset } from './assets.js';
 import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
+import { makeDebugHands, makeFakeJoints } from './wearables.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -879,6 +880,8 @@ function buildSettings(pos) {
     }),
     cycleRow(`⟲ RECALL LATEST · ${getSetting('recallLatest') || 'OFF'}`, 'recallLatest', RECALL_STEPS, null),
     cycleRow(`❖ VR SPLAT BUDGET · ${getSetting('splatBudget') ? Math.round(getSetting('splatBudget') / 1000) + 'K' : 'FULL'}`, 'splatBudget', SPLAT_STEPS, null),
+    cycleRow(`✋ HANDS · ${getSetting('handStyle').toUpperCase()}`, 'handStyle', ['dots', 'robot'],
+      () => applyHandStyle()),
   ];
   const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true });
   panel.placeFlat(scene, pos);
@@ -1513,6 +1516,8 @@ async function boot() {
     .catch((e) => console.warn('disk recall', e));
   recallShowcase().catch((e) => console.warn('showcase recall', e));
 
+  applyHandStyle();   // late on purpose: boot() starts before `worn` exists
+
   // J0 agent bridge: the page answers tool calls relayed by the server
   agentApi = initAgent({
     hubs: () => hubs,
@@ -1785,10 +1790,32 @@ const handViz = [];
   }
 }
 const _hm = new THREE.Matrix4(), _hp = new THREE.Vector3();
+// worn[i] replaces hand i's rendering with a wearable driven by the same
+// joints — the first rung of the wearable layer (see notes/space-packs.md)
+const worn = [null, null];
+function wearHands(which = 'debug') {
+  unwearHands();
+  for (let i = 0; i < 2; i++) worn[i] = makeDebugHands(scene);
+  flashHint('wearing: ' + which + ' hands');
+  audio.toggle(true);
+}
+function unwearHands() {
+  for (let i = 0; i < 2; i++) { worn[i]?.dispose(); worn[i] = null; }
+}
+function applyHandStyle() {
+  if (getSetting('handStyle') === 'robot') { if (!worn[0]) wearHands('robot'); }
+  else unwearHands();
+}
 function updateHands() {
-  for (const { hand, inst } of handViz) {
-    let n = 0;
+  for (let hi = 0; hi < handViz.length; hi++) {
+    const { hand, inst } = handViz[hi];
     const joints = hand.joints || {};
+    if (worn[hi]) {
+      worn[hi].update(joints);
+      inst.visible = false;
+      continue;
+    }
+    let n = 0;
     for (const name in joints) {
       const j = joints[name];
       if (!j.visible) continue;
@@ -2312,6 +2339,14 @@ window.CVR = {
   newWorkflow, createWorkflow,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
+  wearHands, unwearHands,
+  wearDemo: () => {
+    if (!worn[0]) wearHands('robot');
+    const at = cam.pos.clone().add(forward().multiplyScalar(1.1)).add(new THREE.Vector3(0, -0.15, 0));
+    const base = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
+    worn[0].update(makeFakeJoints(base));
+    return 'demo hand posed ahead';
+  },
   openKbd, kbd: () => kbd, kbdKey,
   hear: (t) => agentApi?.hear(t),
   idleTest: () => { lastInput = performance.now() - idleDelayMs - 1000; },

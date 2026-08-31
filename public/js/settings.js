@@ -8,6 +8,7 @@ const DEFAULTS = {
   idleDelayS: 60,       // seconds of quiet before it starts (jitter added)
   recallLatest: 1,      // outputs hung per workflow at boot from the disk scan
   splatBudget: 150000,  // XR splat decimation target; 0 = full resolution
+  handStyle: 'dots',    // 'dots' (joint constellation) or 'robot' (segments)
 };
 
 let S = { ...DEFAULTS };
