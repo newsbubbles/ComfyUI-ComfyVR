@@ -114,7 +114,17 @@ export class ComfyClient {
   }
 
   async listLocalWorkflows() {
-    return await (await fetch(LOCAL + '/workflows')).json();
+    try {
+      const r = await fetch(LOCAL + '/workflows');
+      if (r.ok) return await r.json();
+    } catch (e) { /* no server at all: static hosting */ }
+    // zero-install static hosting (github pages etc): no server endpoints,
+    // but the deploy ships the sample workflows plus a manifest beside them
+    try {
+      const r = await fetch('workflows/index.json');
+      if (r.ok) return (await r.json()).map(n => ({ name: n }));
+    } catch (e) { /* nothing anywhere */ }
+    return [];
   }
 
   // Workflows the user saved in the ComfyUI frontend (server-side userdata).
@@ -137,7 +147,11 @@ export class ComfyClient {
   }
 
   async loadLocalWorkflow(name) {
-    return await (await fetch(LOCAL + '/workflows/' + encodeURIComponent(name))).json();
+    try {
+      const r = await fetch(LOCAL + '/workflows/' + encodeURIComponent(name));
+      if (r.ok) return await r.json();
+    } catch (e) { /* static hosting */ }
+    return await (await fetch('workflows/' + encodeURIComponent(name) + '.json')).json();
   }
 
   async saveLocalWorkflow(name, json) {

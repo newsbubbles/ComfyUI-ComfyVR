@@ -36,6 +36,8 @@ options). Tool errors are guidance, not failures: read them.
 | read_errors | workflow | Core error plus per-node errors |
 | gallery | workflow | Generations with provenance metadata |
 | open_workflow | name | Opens from the library onto the horizon |
+| queue | workflow | Runs it, same as pinching QUEUE; rejection reasons come back as errors |
+| reseed | workflow | Rerolls every randomize seed before a fresh run |
 | highlight | workflow, nodeId? | Your pointing finger: glow the node (or the hub) |
 | set_widget | workflow, nodeId, widget, value | Edit a value; combos validate |
 | listen | | Drain what the user said over push-to-talk (returns [] when quiet) |

@@ -1286,6 +1286,28 @@ function setStatus() {
 let SCHEMA = {};
 let agentApi = null;
 
+// Queue a hub. Throws on rejection so the agent's queue tool can report
+// the reason; the in-space error state lights up either way.
+async function queueHub(h) {
+  if (!h.graph.nodes.size) {
+    flashHint('nothing to run yet · ✚ ADD NODE first');
+    throw new Error('nothing to run yet: the graph is empty');
+  }
+  audio.queueSweep();
+  try {
+    await client.queue(h);
+    h.clearErrors();
+    h.afterQueued();   // the queued run has its seeds; move them on
+    flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
+  } catch (e) {
+    h.onStatus('error');
+    h.reportQueueError(e);
+    flashHint(String(e.message || e));
+    audio.toggle(false);
+    throw e;
+  }
+}
+
 function hubOpts() {
   return {
     audio,
@@ -1296,21 +1318,7 @@ function hubOpts() {
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onAddNode: (h) => openPaletteFree(h),
-    onQueue: async (h) => {
-      if (!h.graph.nodes.size) { flashHint('nothing to run yet · ✚ ADD NODE first'); return; }
-      audio.queueSweep();
-      try {
-        await client.queue(h);
-        h.clearErrors();
-        h.afterQueued();   // the queued run has its seeds; move them on
-        flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
-      } catch (e) {
-        h.onStatus('error');
-        h.reportQueueError(e);
-        flashHint(String(e.message || e));
-        audio.toggle(false);
-      }
-    },
+    onQueue: (h) => queueHub(h).catch(() => {}),   // errors already shown in-space
     onSave: async (h) => {
       // userdata/dropped hubs save a LOCAL copy — never overwrite the
       // user's real ComfyUI workflows until this serializer has more miles
@@ -1384,6 +1392,7 @@ async function boot() {
     wfIndex: () => wfIndex,
     client,
     openWorkflow,
+    queueHub,
     flashHint,
     audio,
   });

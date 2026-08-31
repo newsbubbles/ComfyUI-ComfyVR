@@ -241,3 +241,26 @@ websockets, and FL-MCP is a working reference for the bridge pattern.
 J2 is small because speakwright already speaks the right API. The only
 genuinely new engineering is the in-headset audio path and the agent
 avatar, and both are additive: nothing else waits on them.
+
+## J1 scaffolding map (2026-08-31)
+
+The embedded agent builds from parts already on disk, nothing novel:
+
+- D:\comfycloud-mcp-local: PydanticAI + OpenRouter agent with the
+  find_workflow/validate tool ladder; the harness shape to copy.
+- ComfyUI_FL-MCP (installed): existing example of an MCP surface
+  over comfyui; read for prior art, do not depend on it.
+- speakwright (8765): STT/TTS already wired through /local/stt and
+  /local/tts; the ears and voice need nothing new.
+- fastmcp: wrap the J0 bridge (/local/agent/call) as MCP tools so
+  ANY MCP-speaking harness gets the space for free; the bundled J1
+  agent talks to the same bridge directly over HTTP.
+- Models via OpenRouter, cheap open models only (house rule:
+  never Anthropic through OpenRouter).
+- agent.db (sqlite, python side) owns conversation memory; the page
+  stays stateless, harnesses stay guests.
+
+Gap closed same day: the bridge now has queue and reseed tools
+(the agent could see and edit but not RUN until now). The full
+demo loop is finally toolable: listen -> open_workflow ->
+set_widget -> reseed -> queue -> gallery -> say.

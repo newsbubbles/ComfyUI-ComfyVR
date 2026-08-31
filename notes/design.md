@@ -279,6 +279,32 @@ Others worth imagining:
   placements of the same hubs, and the layout sidecar already knows
   how to remember arrangements per mode key.
 
+### Mode anatomy (framing for discussion, 2026-08-31)
+
+A mode is a TRIPLE, and the axes are independent:
+
+1. PLACEMENT POLICY: where hubs live (horizon ring, orrery sphere,
+   assembly line, station spine, hyperbolic ball).
+2. LOCOMOTION POLICY: how the wanted thing and the operator meet
+   (fly to it; it rotates to you; you walk the line; you stay and
+   summon). Comfort constraints live on this axis.
+3. SCENE: the dressing and its state displays (see Scenes section).
+
+Hubs, panels, and the interaction grammar are invariant across all
+three, which is what keeps modes cheap. Sensible pairings, not a
+matrix explosion: horizon+fly+space (current), orrery+summon+any
+(voice-first, pairs with the agent), line+walk (one huge workflow),
+station+modules (subgraph-heavy work), holodeck-minimal+any
+(recording and low-end headsets), hyperbolic+browse (library only).
+
+Open questions to settle in conversation: is mode global or
+per-hub (proposal: global, with per-hub layout preserved per mode
+key); where does switching live (proposal: a wrist row and a
+library row, with a 1s crossfade, never a continuous morph in VR);
+per-device defaults (desktop might default horizon, headset might
+prefer orrery once it exists); and whether scene follows mode or
+stays a free choice (proposal: free choice, modes only SUGGEST).
+
 ## Scenes (noted 2026-08-30)
 
 The environment dressing is a separate axis from layout. One rule

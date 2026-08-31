@@ -65,6 +65,25 @@ make it fluid: USE AS INPUT on any gallery image (pinch an output,
 point it at another workflow's LoadImage) and the image picker (see
 design.md). Both are core affordances, not pack features.
 
+## The WORLD claim: packs that change the environment (2026-08-31)
+
+The user's ask: a node pack that changes the actual environment of
+comfyvr itself. Ladder, cheapest first:
+
+1. NO PACK AT ALL: an output-name convention, like the showcase
+   already uses. A workflow whose output lands as `cvr_world_*.spz`
+   (or .splat/.ply) gets a placard whose pinch promotes it to the
+   ENVIRONMENT instead of a standing asset: the space's backdrop
+   becomes that splat, hubs float inside it. HYWorld2 (panorama to
+   scene splat) plus this convention = generate a place, work in it,
+   zero new node code. This is the make-vr-world sample.
+2. A SetEnvironment NODE: outputs a small ENV spec (skybox or splat
+   ref, fog color and density, mote density, light tint) that
+   comfyvr applies when the run completes. The workflow does not
+   just produce things anymore; finishing a run can change the
+   weather. Doubles as run-state theater done by the graph itself.
+3. Full scene subspace claims come later with the pack contract.
+
 ## Why this is the right direction
 
 - It answers "why VR" with things FLAT COMFY CANNOT DO: wearing

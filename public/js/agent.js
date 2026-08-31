@@ -9,7 +9,7 @@ import { HOSTED, LOCAL } from './comfy.js';
 const SAY_MAX = 220;
 
 export function initAgent(ctx) {
-  const { hubs, wfIndex, client, openWorkflow, flashHint, audio } = ctx;
+  const { hubs, wfIndex, client, openWorkflow, queueHub, flashHint, audio } = ctx;
 
   // push-to-talk utterances queue here until the harness drains them with
   // listen(); the page never interprets speech, it only carries it
@@ -103,6 +103,20 @@ export function initAgent(ctx) {
       if (!w) throw new Error(`no workflow matching "${name}"`);
       await openWorkflow(w);
       return { open: w.name, already: false };
+    },
+
+    // Run a workflow: the same path as pinching QUEUE on its core, so the
+    // user watches pulses climb the wires. Rejections throw with the reason.
+    queue: async ({ workflow }) => {
+      const h = findHub(workflow);
+      await queueHub(h);
+      return { queued: h.name, simulated: client.mode !== 'live' };
+    },
+
+    reseed: ({ workflow }) => {
+      const h = findHub(workflow);
+      h.reseed();
+      return { reseeded: h.name };
     },
 
     // the agent's pointing finger: panel glow when the bowl is unfolded,
