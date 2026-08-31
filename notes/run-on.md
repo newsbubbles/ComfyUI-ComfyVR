@@ -55,7 +55,7 @@ GPU tier automatically.
   /view like always.
 - Cold-start theater: show provisioning phases as the hub
   assembling itself in space (pulling image, installing packs,
-  downloading models with progress). Honest progress beats spinner.
+  downloading models with progress). Real progress beats a spinner.
 
 ## Occupied / vacant
 
