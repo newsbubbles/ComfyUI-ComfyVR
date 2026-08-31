@@ -94,6 +94,45 @@ claim. Heavy environment generation (HYWorld2-class models) is a
 Run On workload for the 1080-bound; the env pack should assume
 remote execution is normal, not exceptional.
 
+## Partitioned workspaces: the programmable-matter layout (2026-08-31)
+
+The user's long-form vision, recorded for when it is time. Imagine a
+workspace where every workflow outputs world-stuff (splats, assets,
+motion, physics params) and the workflows are ARRANGED so that they
+partition the actual 3D space: each workflow owns a region, its
+outputs materialize INTO that region, and the region is the scene
+it generates and runs. Live nodes act as dynamics controls for
+their partition (wind, spawn rate, gravity, palette), so editing
+the graph is editing the place while you stand in it. At that
+point layouts stop being furniture arrangement and become SPACE
+LAYOUTS: the arrangement of the workflows is the composition of
+the world.
+
+Mechanics to work out when we get there:
+
+- Partition assignment: implicit (a Voronoi cell around each hub's
+  anchor) versus explicit (user-drawn bounds, like groups but
+  volumetric). Probably implicit first with manual override, the
+  same philosophy as layout overrides today.
+- Materialization targeting: a workflow's outputs land in its own
+  partition by default; cvr_world_ scales down from "the whole
+  environment" to "my region's environment."
+- Live nodes: a space-pack node type whose widget edits act
+  CONTINUOUSLY on the partition rather than through a queue cycle.
+  This is where the run-loop question gets real (re-run on change,
+  streaming nodes, or an agent tending it).
+- The whole thing leans on Run On for anyone GPU-poor, since a
+  workspace of generating regions is many workflows warm at once.
+
+Why we believe the audience exists: ComfyUI itself proved people
+adopt visual programming far past the comfort point when the output
+is worth it, and the prior-art spike (notes/prior-art.md) shows
+everyone who built in-world programming built a new world and asked
+programmers to move in; nobody built the world around an existing
+programming community's own graphs. This is the game you program
+while it runs, arrived at from the tool side instead of the game
+side.
+
 ## Why this is the right direction
 
 - It answers "why VR" with things FLAT COMFY CANNOT DO: wearing

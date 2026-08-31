@@ -138,8 +138,14 @@ syncAngles(new THREE.Vector3(0, 0, 0));
 
 function flyTo(p1, l1, dur = 1.6, then = null) {
   if (renderer.xr.isPresenting) {
-    // comfort: teleport instead of gliding while the headset is on
+    // comfort: teleport instead of gliding while the headset is on.
+    // Land FACING the destination: the head pose is physical and cannot be
+    // commanded, so counter-rotate the rig by the head's local yaw and the
+    // user comes out looking at the target regardless of body bearing.
     cam.pos.copy(p1);
+    const headYaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
+    const d = l1.clone().sub(p1);
+    if (d.x * d.x + d.z * d.z > 1e-6) xrState.yaw = Math.atan2(-d.x, -d.z) - headYaw;
     cam.anim = null; cam.dock = null;
     then?.();
     return;
