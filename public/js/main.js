@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest } from './destinations.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -1455,6 +1455,25 @@ function hubOpts() {
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onAddNode: (h) => openPaletteFree(h),
+    // ▸ RUN ON row: cycles the hub through local + every known destination.
+    // Always present so the feature is discoverable; the label IS the egress
+    // label (a hub bound elsewhere says so right above QUEUE).
+    destRow: (h) => {
+      const label = () => {
+        if (!h.dest) return '▸ RUN ON · LOCAL';
+        const d = listDestinations().find((x) => x.id === h.dest);
+        return '▸ RUN ON · ' + (d ? d.name : String(h.dest)).toUpperCase();
+      };
+      const row = buttonRow(label(), () => {
+        const ids = [null, ...listDestinations().map((d) => d.id)];
+        if (ids.length === 1) { flashHint('no other destinations yet · CVR.addPeer(name, url)'); return; }
+        h.dest = ids[(ids.indexOf(h.dest ?? null) + 1) % ids.length];
+        row.label = label();
+        h.corePanel.dirty();
+        audio.tick();
+      });
+      return row;
+    },
     onRecall: (h) => recallMore(h).catch((e) => flashHint('recall failed: ' + (e.message || e))),
     onQueue: (h) => queueHub(h).catch(() => {}),   // errors already shown in-space
     onSave: async (h) => {
@@ -2339,6 +2358,9 @@ window.CVR = {
   openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
   wearHands, unwearHands,
   addPeer, listDestinations, removeDestination,
+  listRigs, saveRig, removeRig, stopDest,
+  startRig: (rigId) => startRig(rigId, (st) => flashHint(`warming ${rigId}: ${st.status || '...'}`))
+    .then((d) => { flashHint(`${d.name} is live`); return d; }),
   runOn: (hubName, destId) => {
     const h = hubs.find(x => x.name.toLowerCase().includes(String(hubName).toLowerCase()));
     if (!h) throw new Error('no hub ' + hubName);

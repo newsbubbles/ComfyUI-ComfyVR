@@ -171,6 +171,22 @@ try:
             _AGENT["pending"].pop(cid, None)
         return web.json_response(d)
 
+    # Cloud provider actions: the page never holds provider keys;
+    # providers.py owns custody (env or gitignored providers.local.json).
+    @routes.post("/comfyvr/local/provider/{name}/{action}")
+    async def cvr_provider(request):
+        from . import providers
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except ValueError:
+                raise web.HTTPBadRequest(text="body must be JSON")
+        status, out = await providers.handle(
+            request.match_info["name"], request.match_info["action"], body
+        )
+        return web.json_response(out, status=status)
+
     # Voice: forward text to the local sidecar's speech endpoint.
     @routes.post("/comfyvr/local/tts")
     async def cvr_tts(request):

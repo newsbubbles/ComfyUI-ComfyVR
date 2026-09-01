@@ -162,6 +162,24 @@ def app_factory(backend: str) -> web.Application:
                 status=502,
             )
 
+    async def provider_call(request):
+        """Cloud provider actions (pricing/start/status/stop/terminate).
+
+        The page never holds provider keys; providers.py owns custody and
+        talks to the provider API through our client session.
+        """
+        import providers
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except ValueError:
+                raise web.HTTPBadRequest(text="body must be JSON")
+        status, out = await providers.handle(
+            request.match_info["name"], request.match_info["action"], body, request.app["http"]
+        )
+        return web.json_response(out, status=status)
+
     # ---- agent bridge: tools ride a websocket INTO the live page ----------
     # The space is the source of truth for spatial state, so tool calls are
     # answered by the page itself: an agent POSTs /local/agent/call, the
@@ -285,6 +303,7 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_post("/local/layouts/{key}", layout_save)
     app.router.add_post("/local/stt", stt_proxy)
     app.router.add_post("/local/tts", tts_proxy)
+    app.router.add_post("/local/provider/{name}/{action}", provider_call)
     app.router.add_get("/local/agent", agent_ws)
     app.router.add_post("/local/agent/call", agent_call)
     app.router.add_get("/ws", ws_proxy)

@@ -173,16 +173,40 @@ what they would pay anyway; the ref code is in the link we open.
 
 ## Phases
 
-- R0: point standalone server.py at an existing remote ComfyUI
-  (hand-started pod) with a token; prove the space is identical.
+- R0 DONE (2026-09-01): went further than the note planned. Instead of
+  repointing the proxy, ComfyClient grew {base}: every destination is
+  its own client with its own websocket, so runs happen IN PARALLEL
+  and each hub's events ride home on the right socket. Proven against
+  a second ComfyUI on 8199: a workflow built in-space ran there and
+  its output landed in the gallery while the primary stayed free.
+  Peer-side errors route home too (a CPU OOM landed on the hub panel).
+- R0.5 DONE: ▸ RUN ON row on every hub core, right under QUEUE. Cycles
+  local -> each destination; the label is the egress label. Gotcha
+  found by test: fresh hubs have dest undefined, and indexOf(undefined)
+  is -1, so the first cycle skipped the first destination; ?? null.
 - R1: manifest extractor: workflow json -> {packs+vers, models+urls,
-  VRAM estimate}. Test against make-vr-asset. Useful standalone
-  (doubles as a local "what does this workflow need" card).
-- R2: RunPod provisioner: docker base + network volume + rp.py
-  lifecycle; cold and warm start timed.
-- R3: destination row on QUEUE + cost meter + auto-stop.
-- R4: more providers (vast, fal via connector, tailscale peers),
+  VRAM estimate} for display and GPU sizing ONLY; resolution is
+  DELEGATED to comfy-cli on the pod (see adversarial pass).
+- R2: RunPod + Vast provisioners; docker base + network volume; cold
+  and warm start timed. Scaffolding shipped with R0.5: providers.py
+  (python owns key custody: env or gitignored providers.local.json;
+  the page NEVER sees a key, and could not call provider APIs anyway
+  because of CORS), one route /local/provider/{name}/{action} in both
+  deployments, five actions total (pricing/start/status/stop/
+  terminate). Python normalizes the shapes, so the js adapter is
+  IDENTICAL for every provider and a new provider is one python
+  function. status() probes the pod's ComfyUI from the server, so
+  url appears only when the backend actually serves. Rigs also
+  shipped: localStorage cvr-rigs, saveRig/startRig/stopDest;
+  startRig polls status into cold-start phases (15 min ceiling).
+- R3: cost meter on the wrist + auto-stop + rig save-after-success.
+- R4: more providers (fal via connector, ComfyCloud as a row),
   affiliate links with disclosure.
+
+LAN note: on a --listen/--tls server anyone on the LAN can hit the
+provider route, same as they can already queue prompts. The key never
+leaves the python process; the exposure is a housemate starting a pod,
+not a stranger reading the key. Documented in providers.py.
 
 ## The two-camps read (reddit, 80+ likes)
 

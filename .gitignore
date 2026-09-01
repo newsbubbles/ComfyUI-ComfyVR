@@ -11,3 +11,4 @@ workflows/*
 !workflows/index.json
 dist/
 media/
+providers.local.json

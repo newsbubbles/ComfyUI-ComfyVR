@@ -264,6 +264,7 @@ export class Hub {
       alertRow(() => this.lastError),
       progressRow(() => this.progress),
       buttonRow('◈ QUEUE', () => this.opts.onQueue(this)),
+      ...(this.opts.destRow ? [this.opts.destRow(this)] : []),
       buttonRow('⟳ RESEED · SAVE ⬡', (frac) => (frac < 0.5 ? this.reseed() : this.opts.onSave(this))),
       buttonRow('✚ ADD NODE', () => this.opts.onAddNode?.(this)),
       buttonRow('⟲ RECALL FROM DISK', () => this.opts.onRecall?.(this)),
