@@ -178,6 +178,38 @@ provisioner is a thin orchestrator: pod lifecycle + comfy-cli calls
   the provider adapter should take the ref link as data, never
   hardcode one.
 
+## The companion pack (user idea, 2026-09-01)
+
+Ship a node pack WITH the cloud rig that handles node installs on the
+running pod, through Manager's machinery. This is the pod-side agent
+seat, and it is probably just... ComfyUI-ComfyVR itself: our repo IS
+a custom node whose __init__.py mounts routes inside ComfyUI. Add one
+line to the bootstrap (install our pack) and every pod grows:
+- /comfyvr/local/* on the pod (galleries recall pod-side outputs!)
+- a place for install-on-running-pod: a route that shells comfy-cli
+  or drives Manager's install API, so adding a node NEVER needs a
+  re-warm
+- the seat for the auth token check (Comfy has no auth; the pod
+  proxy url is public), phase reporting, and boot.log serving after
+  boot
+To verify at next burn: whether `comfy node install` accepts our
+GitHub url or the pack must be on the registry first (registering on
+registry.comfy.org is worth doing regardless; licensing research is
+in flight before we publish anything there).
+
+## Peers and https, settled
+
+The headset page is https (WebXR requires it) and a peer's ComfyUI is
+plain http, which mixed content blocks... and that is exactly what
+the relay solves: clientFor routes any http destination through our
+own origin automatically (server-side forwarding, ws included). So
+ADD PEER takes http urls fine; the ONLY requirement on the peer's
+owner is --listen (+ CORS open for the direct/desktop case). A peer
+running comfyvr's own vr.py https server can be added by its https
+address and connects direct, no relay. The static GitHub Pages demo
+has no python behind it, so no relay there; it has no backend either,
+so nothing is lost.
+
 ## Money
 
 Affiliate programs are real and disclosure goes in the README:

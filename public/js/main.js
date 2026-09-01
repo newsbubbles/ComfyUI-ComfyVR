@@ -961,27 +961,43 @@ function buildRemoteRuns(pos) {
         if (frac > 0.8) { removeDestination(d.id); rebuild(); audio.toggle(false); }
         else flashHint(d.url);
       }));
-    } else {
-      const st = d.url ? 'SERVING' : d.podId ? 'STARTING' : 'COLD';
-      const cost = d.usdHr ? ` · $${d.usdHr}/H` : '';
-      // stop works the moment a pod EXISTS: a warming pod burns money
-      // too, and waiting for serving to allow stop was a field bug
-      rows.push(buttonRow(`☁ ${d.name.toUpperCase()} · ${st}${d.podId ? cost + ' · ■ STOP' : ''}`, (frac) => {
-        if (d.podId && frac > 0.7) {
-          stopDest(d.id)
-            .then(() => { flashHint('stopped ' + d.name + ' · gpu billing ended'); rebuild(); })
-            .catch((e) => flashHint(String(e.message || e)));
-        } else flashHint(d.podId ? `pod ${d.podId} · ${st.toLowerCase()}` : 'cold · warm its rig below');
-      }));
     }
   }
+  // One row per rig, showing the ACTUAL rig state (field feedback: a
+  // WARM button next to an already-running pod lies). Cold rig: the row
+  // warms it. Podded rig: the row is the stop control, with a two-tap
+  // terminate on the right edge.
   for (const r of rigs) {
-    rows.push(buttonRow(`▸ WARM RIG · ${r.name.toUpperCase()} · ${r.provider.toUpperCase()}`, () => {
-      flashHint('warming ' + r.name + ' (cold start can take many minutes)');
-      startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`))
-        .then((d) => { flashHint(`${d.name} is live`); rebuild(); })
+    const d = dests.find((x) => x.id === 'cloud-' + r.id);
+    if (!d?.podId) {
+      rows.push(buttonRow(`▸ WARM · ${r.name.toUpperCase()} · ${r.provider.toUpperCase()}`, () => {
+        flashHint('warming ' + r.name + ' (a cold start can take 20 minutes)');
+        startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`))
+          .then((dd) => { flashHint(`${dd.name} is live`); rebuild(); })
+          .catch((e) => flashHint(String(e.message || e)));
+      }));
+      continue;
+    }
+    const st = d.url ? 'SERVING' : 'STARTING';
+    const cost = d.usdHr ? ` · $${d.usdHr}/H` : '';
+    const row = buttonRow(`■ STOP · ${r.name.toUpperCase()} · ${st}${cost} · ✕`, (frac) => {
+      if (frac > 0.85) {
+        if (row.armed) {
+          terminateDest(d.id)
+            .then(() => { flashHint('terminated ' + r.name + ' · all billing ended'); rebuild(); })
+            .catch((e) => flashHint(String(e.message || e)));
+        } else {
+          row.armed = true;
+          flashHint('tap ✕ again to TERMINATE (everything on the pod is lost)');
+          setTimeout(() => { row.armed = false; }, 3000);
+        }
+        return;
+      }
+      stopDest(d.id)
+        .then(() => { flashHint('stopped ' + r.name + ' · gpu billing ended'); rebuild(); })
         .catch((e) => flashHint(String(e.message || e)));
-    }));
+    });
+    rows.push(row);
   }
   rows.push(buttonRow('✚ ADD PEER · NAME URL', () => {
     const row = { name: 'name http://host:8188', oneline: true, widget: { value: '' } };
@@ -990,7 +1006,9 @@ function buildRemoteRuns(pos) {
       const m = String(row.widget.value).trim().match(/^(\S+)\s+(\S+)$/);
       if (!m) { flashHint('format: name http://host:8188'); return; }
       addPeer(m[1], m[2]);
-      flashHint('peer added · owner must run --listen with CORS open');
+      // http peers are fine even from the https headset page: clientFor
+      // routes them through this origin's relay automatically
+      flashHint('peer added · plain-http peers ride the relay · owner runs --listen with CORS open');
       rebuild();
       audio.accrete();
     };
