@@ -1013,7 +1013,7 @@ function rebuildSpaceThreads() {
 // settings shipped both ways before this existed.
 function floaters() {
   // panels built with {floating: true} enroll themselves on place and
-  // leave on dispose (FLOATERS in panels.js) — nothing to keep in sync
+  // leave on dispose (FLOATERS in panels.js), so nothing to keep in sync
   return [...FLOATERS];
 }
 
