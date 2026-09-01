@@ -8,6 +8,7 @@ workflows/*
 !workflows/hires-lora.json
 !workflows/img2img-remix.json
 !workflows/make-vr-asset.json
+!workflows/make hands.json
 !workflows/index.json
 dist/
 media/

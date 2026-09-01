@@ -111,12 +111,22 @@ and outputs on a REMOTE destination resolve through the primary
 client's /view, the same known gap materialize has (fix rides the
 capabilities/contract work).
 
-The ladder now has ONE missing rung for the full flagship demo:
-(3) the make-hands workflow (t2i canonical open palm, Hunyuan3D
-image-to-mesh in core nodes, models to D:, save as cvr_hands_*.glb,
-rig-fit via tools/rigfit_hands.py between mesh and save; the
-rig-fit step wants either a small custom node shelling blender or a
-manual step until the space-pack node exists).
+RUNG 3 AUTHORED (2026-09-01): workflows/make hands.json, built
+in-space and saved through the page's own serializer. Sixteen nodes:
+SDXL t2i (canonical open-palm prompt, plain background) feeding
+CLIPVisionEncode, then the core Hunyuan3D chain
+(ImageOnlyCheckpointLoader -> Hunyuan3Dv2Conditioning ->
+EmptyLatentHunyuan3Dv2 -> KSampler -> VAEDecodeHunyuan3D ->
+VoxelToMesh), forking to SaveGLB (raw mesh) and CVRRigFitHands
+(wearable). CVRRigFitHands grew an optional MESH input so it chains
+directly, writing the intermediate glb with core's own save_glb.
+Both checkpoints carry embedded properties.models urls, HEAD
+verified (6.94 GB total), so the workflow is its own provisioning
+manifest: Run On can stand it up on a pod with zero local
+downloads. Queue validation reaches "CVRRigFitHands not found",
+the exact right error until the next ComfyUI restart registers the
+node. To run the flagship: restart ComfyUI, download or Run On the
+two checkpoints, queue, pinch the placard, wear your hands.
 
 Chaining note: steps 1-3 chain through images and meshes that today
 must round-trip through the output folder. Two bridging affordances

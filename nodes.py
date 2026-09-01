@@ -45,9 +45,12 @@ class CVRRigFitHands:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mesh_file": ("STRING", {"default": "", "tooltip": "mesh in the output or input dir (.glb/.obj/.fbx), e.g. hunyuan_00001_.glb"}),
+                "mesh_file": ("STRING", {"default": "", "tooltip": "mesh in the output or input dir (.glb/.obj/.fbx); ignored when a MESH is connected"}),
                 "name": ("STRING", {"default": "hands"}),
-            }
+            },
+            "optional": {
+                "mesh": ("MESH", {"tooltip": "chain straight from VoxelToMesh / mesh nodes; wins over mesh_file"}),
+            },
         }
 
     RETURN_TYPES = ()
@@ -55,15 +58,22 @@ class CVRRigFitHands:
     FUNCTION = "rig"
     CATEGORY = "comfyvr"
 
-    def rig(self, mesh_file, name):
+    def rig(self, mesh_file, name, mesh=None):
         import folder_paths
         out_dir = folder_paths.get_output_directory()
         src = None
-        for base in (out_dir, folder_paths.get_input_directory()):
-            p = os.path.join(base, mesh_file)
-            if mesh_file and os.path.isfile(p):
-                src = p
-                break
+        if mesh is not None:
+            # a connected MESH chains without a file round-trip: write it
+            # with core's own dependency-free glb writer, then fit that
+            from comfy_extras.nodes_save_3d import save_glb
+            src = os.path.join(out_dir, "_cvr_rigfit_src.glb")
+            save_glb(mesh.vertices[0], mesh.faces[0], src)
+        else:
+            for base in (out_dir, folder_paths.get_input_directory()):
+                p = os.path.join(base, mesh_file)
+                if mesh_file and os.path.isfile(p):
+                    src = p
+                    break
         if not src:
             raise RuntimeError(f"mesh not found in output or input dir: {mesh_file}")
         blender = find_blender()
