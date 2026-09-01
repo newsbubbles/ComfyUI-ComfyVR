@@ -209,6 +209,25 @@ one poke is one press. Wrist watch first (it is in arm's reach by
 definition), then the keyboard, where poke-typing is the obvious
 win over ray-typing. Ray and poke coexist; nearest-signal wins.
 
+BUILT 2026-09-01, awaiting headset field test. pokeTick() in main.js
+runs after the ray tick each XR frame (so up close the touched row
+wins the highlight). pokeSurface() inverts a world point to
+(u, vTop, depth) for BOTH panel kinds: flat billboards are plane
+local space, curved node panels invert the placement arc (th =
+atan2(x, -z), depth = r - hypot; roundtrips anchorWorld exactly on
+a live VAE Decode panel). Thresholds: hover 9cm, press 1.8cm,
+release 5cm hysteresis, 4cm behind-gate. Candidates per hand: wrist
+watch + floaters (keyboard, settings, pickers) + library always;
+hub panels only when the hand is inside that hub's bowl. Sliders
+track the finger while touched; every interactive row kind fires
+through the same interact() a pinch uses, so poke-typing on the
+keyboard needed zero extra code. Desktop-verified through
+CVR._poke: hover sets hot without firing, press fires ONCE, hold
+does not retrigger, retreat releases, next poke fires again.
+Field questions: do the thresholds feel right at wrist-watch scale,
+and does thumb-tip cause accidental presses while pinching (if so,
+drop thumb from POKE_TIPS or suppress poke during pinch).
+
 ## Image pickers on every image widget (noted 2026-08-31)
 
 Anywhere a panel shows an image preview for a widget flagged

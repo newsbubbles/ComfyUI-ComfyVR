@@ -2172,6 +2172,93 @@ function xrControllersTick() {
   }
 }
 
+// ---------- fingertip poke (field request 2026-09-01) ----------
+// Any fingertip on either hand presses what it touches: within HOVER of a
+// panel surface the tip drives the same hot-row path the ray uses, and
+// crossing PRESS fires the same interact() a pinch would, once per touch
+// (released past RELEASE, so one poke is one press). Sliders track the
+// finger while touched. Ray and poke coexist: poke runs after the ray
+// tick, so up close the touched row wins the highlight.
+const POKE_TIPS = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+const POKE = { hover: 0.09, press: 0.018, release: 0.05, behind: -0.04 };
+const pokeDown = new Map();   // "<hand>:<tip>" -> {panel, row}
+const _pokeV = new THREE.Vector3(), _pokeTip = new THREE.Vector3();
+
+// (u, vTop, depth) of a world point against a panel's surface; depth > 0
+// is in front of the face. Flat panels are a plane in local space; curved
+// ones (node panels) are an arc of radius placement.r facing the center.
+function pokeSurface(p, world) {
+  const l = p.mesh.worldToLocal(_pokeV.copy(world));
+  const H = p.worldHeight();
+  if (p.billboard || !p.placement) {
+    return { u: l.x / p.worldWidth + 0.5, vTop: 0.5 - l.y / H, depth: l.z };
+  }
+  const { r, arc } = p.placement;
+  return { u: Math.atan2(l.x, -l.z) / arc + 0.5, vTop: 0.5 - l.y / H, depth: r - Math.hypot(l.x, l.z) };
+}
+
+// Panels a hand could touch at all: the wrist watch and floating panels
+// always (they live at arm's length by design), hub panels only when the
+// hand is inside that hub's bowl.
+function pokePanels(handPos) {
+  const out = [];
+  if (renderer.xr.isPresenting && wrist?.panel) out.push(wrist.panel);
+  out.push(...floaters());
+  if (libraryPanel) out.push(libraryPanel);
+  for (const h of hubs) {
+    if (!h.corePanel) continue;
+    if (handPos.distanceTo(h.center()) > (h.rimRadius || 10) + 3) continue;
+    out.push(h.corePanel, ...h.panels.values());
+  }
+  return out.filter((p) => p?.mesh?.visible);
+}
+
+function pokeStep(key, tip, panels) {
+  let best = null;
+  for (const p of panels) {
+    const s = pokeSurface(p, tip);
+    if (s.u < -0.02 || s.u > 1.02 || s.vTop < -0.02 || s.vTop > 1.02) continue;
+    if (s.depth < POKE.behind || s.depth > POKE.hover) continue;
+    if (!best || Math.abs(s.depth) < Math.abs(best.s.depth)) best = { p, s };
+  }
+  const held = pokeDown.get(key);
+  if (!best) { pokeDown.delete(key); return; }
+  const { p, s } = best;
+  const ri = p.rowAt(s.u, s.vTop);
+  if (ri.row) {
+    if (p.hot !== ri.row) audio.tick();
+    p.setHot(ri.row);
+    p.setHotFrac(ri.frac);
+  }
+  if (held) {
+    if (ri.kind === 'slider' && ri.row === held.row && p === held.panel) applySliderFrac(p, ri.row, ri.frac);
+    if (s.depth > POKE.release) pokeDown.delete(key);
+    return;
+  }
+  if (s.depth < POKE.press && ri.row && isInteractive(ri)) {
+    pokeDown.set(key, { panel: p, row: ri.row });
+    if (ri.kind === 'slider') applySliderFrac(p, ri.row, ri.frac);
+    else interact(p, p.mesh.userData.hub || null, ri);
+  }
+}
+
+function pokeTick() {
+  for (let hi = 0; hi < handViz.length; hi++) {
+    const joints = handViz[hi].hand.joints;
+    const wj = joints?.wrist;
+    if (!wj || !wj.visible) continue;
+    wj.getWorldPosition(_pokeV);
+    const near = pokePanels(_pokeV);
+    if (!near.length) continue;
+    for (const tip of POKE_TIPS) {
+      const j = joints[tip];
+      if (!j || !j.visible) continue;
+      j.getWorldPosition(_pokeTip);
+      pokeStep(hi + ':' + tip, _pokeTip, near);
+    }
+  }
+}
+
 function xrTick(dt) {
   const session = renderer.xr.getSession();
   if (!session) return;
@@ -2204,6 +2291,7 @@ function xrTick(dt) {
     }
   }
   xrControllersTick();
+  pokeTick();
 }
 
 // ---------- frame loop ----------
@@ -2382,6 +2470,7 @@ window.CVR = {
     return 'demo hand posed ahead';
   },
   openKbd, kbd: () => kbd, kbdKey,
+  _poke: { step: pokeStep, surface: pokeSurface, panels: pokePanels, down: pokeDown },
   hear: (t) => agentApi?.hear(t),
   idleTest: () => { lastInput = performance.now() - idleDelayMs - 1000; },
   idleState: () => ({ walking: !!idleReturn, delayS: Math.round(idleDelayMs / 1000) }),

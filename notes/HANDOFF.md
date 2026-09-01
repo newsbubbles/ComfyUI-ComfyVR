@@ -3,6 +3,27 @@
 Orientation for the next work session or contributor. State as of
 2026-08-28, just after the public push.
 
+## Field-verify list for the next headset session (2026-09-01)
+
+Everything below is desktop-verified and awaiting the Quest:
+
+1. Fingertip poke: touch wrist-watch buttons and poke-type on the
+   keyboard with any finger. Tuning knobs are POKE in main.js (hover
+   9cm / press 1.8cm / release 5cm). Watch for thumb-tip firing
+   accidentally during pinches; if so drop it from POKE_TIPS.
+2. ▸ RUN ON row on hub cores (cycles local -> destinations; with no
+   destinations it hints instead).
+3. Robot hands (⚙ SETTINGS -> ✋ HANDS · ROBOT).
+4. Floating panels (keyboard, settings, pickers) move by pinching
+   their title bar.
+5. Cursor dot at quarter size against near surfaces (wrist watch).
+6. Grab-a-node-anywhere: pinch a node body up close and move 2.5cm
+   to grab; REACH_XR 21 is the travel/touch boundary, one number.
+7. Palette suggestions when dragging from a slot (VAE Encode first
+   from an IMAGE output, not alphabetic).
+8. The public demo on the Quest browser:
+   https://newsbubbles.github.io/ComfyUI-ComfyVR/
+
 ## Quest 2 field report (2026-08-28, first in-headset session)
 
 Release gate 1 passed: the space, navigation, pinch interaction, and
