@@ -12,3 +12,5 @@ workflows/*
 dist/
 media/
 providers.local.json
+providers.state.json
+private/

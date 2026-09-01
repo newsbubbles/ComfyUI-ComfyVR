@@ -141,6 +141,43 @@ provisioner is a thin orchestrator: pod lifecycle + comfy-cli calls
   SD communities actually rent from, and both carry referral
   programs), add others as requested.
 
+## Directives round two (user, 2026-09-01)
+
+- DETERMINISTIC COOLDOWN, non-negotiable: a pod unused for 30 minutes
+  (user-settable) must stop spending; alternatively or additionally a
+  SPENDING LIMIT. Built same day: python-side watchdog in providers.py
+  (survives browser death; persists WATCH to providers.state.json so
+  it survives server restarts too). Activity = client status touches
+  OR a non-empty queue on the pod itself, so a long render with the
+  browser closed is not "idle." Cooldown stops (volume survives);
+  spend cap TERMINATES. Settings floor shipped: ⏻ POD COOLDOWN
+  (15/30/60/120m) and ◎ POD SPEND CAP (off/1/5/10/25) in the
+  workspace settings; rig fields override. Residual risk: the server
+  process itself dying and never returning; the wrist cost meter is
+  the human backstop for that.
+- ONE CONTRACT FOR EVERY REMOTE HOST: the adapter schema must
+  standardize ALL interaction with remote hosts, peer computer and
+  compute vendor alike, including CAPABILITY flags (websocket
+  supported or not, https or plain http, can-upload-inputs, has
+  lifecycle, cost visibility). Today's five lifecycle actions +
+  normalized python side is the vendor half; the contract wants to
+  grow a `capabilities` dict on every destination so the space can
+  degrade gracefully and say so (a no-websocket host polls history;
+  a plain-http host rides the relay automatically, which works now).
+- ADDING PROVIDERS must be a user-reachable path, not a code path
+  only, which points at a dedicated REMOTE RUNS settings submenu:
+  vendors, keys (server-side custody stays), saved rigs, cooldown
+  and cap, per-vendor affiliate disclosure. The two safety knobs
+  live in main settings until that submenu exists.
+- POD UI: pods deserve dedicated presence, in-space (the pod as a
+  visible object whose state reads at a glance: warming, serving,
+  cooling, dead, plus live $/hr and spend) AND a settings submenu.
+  Ties into the "first real large UI refactor" the user sees coming;
+  the floater registry was the warm-up for that.
+- Affiliate links will be THE USER'S OWN (they will provide them);
+  the provider adapter should take the ref link as data, never
+  hardcode one.
+
 ## Money
 
 Affiliate programs are real and disclosure goes in the README:

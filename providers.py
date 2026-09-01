@@ -45,6 +45,111 @@ ENV_KEYS = {"runpod": "RUNPOD_API_KEY", "vast": "VAST_API_KEY"}
 RUNPOD = "https://api.runpod.io/v2"
 VAST = "https://console.vast.ai/api/v0"
 
+STATEFILE = os.path.join(ROOT, "providers.state.json")
+
+
+def _load_state():
+    try:
+        with open(STATEFILE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state():
+    try:
+        with open(STATEFILE, "w", encoding="utf-8") as fh:
+            json.dump(WATCH, fh, indent=1)
+    except OSError:
+        pass
+
+
+# ---- spend watchdog ------------------------------------------------------
+# The user's rule: 100% deterministic cooldown. Every pod started through
+# here is tracked and STOPPED after cooldown_min with no activity, where
+# activity = client touches (status calls) OR a non-empty queue on the pod
+# itself (a long render with the browser closed is not idle). A spend cap
+# (cap_usd, optional) TERMINATES when est. spend crosses it. Runs in this
+# process and persists to providers.state.json, so it survives browser
+# death and server restarts; the residual risk is this process dying and
+# never coming back, which the wrist cost meter exists to catch.
+WATCH = _load_state()
+_watchdog_started = False
+
+
+def touch(pod_id):
+    w = WATCH.get(pod_id)
+    if w:
+        import time
+        w["last_used"] = time.time()
+        _save_state()
+
+
+async def _pod_busy(http, url):
+    """True if the pod's ComfyUI has work queued or running."""
+    import aiohttp
+    try:
+        async with http.get(url + "/prompt", timeout=aiohttp.ClientTimeout(total=6)) as r:
+            if r.status != 200:
+                return False
+            d = await r.json()
+            return (d.get("exec_info") or {}).get("queue_remaining", 0) > 0
+    except Exception:
+        return False
+
+
+async def _watchdog():
+    import asyncio
+    import time
+    import aiohttp
+    while True:
+        await asyncio.sleep(60)
+        if not WATCH:
+            continue
+        async with aiohttp.ClientSession() as http:
+            for pod_id, w in list(WATCH.items()):
+                try:
+                    prov, key = w.get("provider"), api_key(w.get("provider", ""))
+                    if not key:
+                        continue
+                    fn = PROVIDERS[prov]
+                    st = await fn("status", {"podId": pod_id}, http, key)
+                    if st.get("status") in ("terminated", "exited", "stopped"):
+                        WATCH.pop(pod_id, None)
+                        _save_state()
+                        continue
+                    now = time.time()
+                    spend = (now - w["started"]) / 3600.0 * (w.get("usd_hr") or 0)
+                    if w.get("cap_usd") and spend >= w["cap_usd"]:
+                        await fn("terminate", {"podId": pod_id}, http, key)
+                        WATCH.pop(pod_id, None)
+                        _save_state()
+                        print(f"[comfyvr] watchdog: terminated {pod_id} at spend cap (${spend:.2f})")
+                        continue
+                    if st.get("url") and await _pod_busy(http, st["url"]):
+                        w["last_used"] = now
+                        _save_state()
+                        continue
+                    if now - w.get("last_used", w["started"]) >= w.get("cooldown_s", 1800):
+                        await fn("stop", {"podId": pod_id}, http, key)
+                        WATCH.pop(pod_id, None)
+                        _save_state()
+                        print(f"[comfyvr] watchdog: stopped idle pod {pod_id} after cooldown")
+                except Exception as e:
+                    print(f"[comfyvr] watchdog error on {pod_id}: {e}")
+
+
+def ensure_watchdog():
+    global _watchdog_started
+    if _watchdog_started:
+        return
+    import asyncio
+    try:
+        asyncio.get_running_loop().create_task(_watchdog())
+        _watchdog_started = True
+    except RuntimeError:
+        pass  # no loop yet; next call from a request context will succeed
+
 # Torch preinstalled, empty entrypoint (args become the command verbatim),
 # predictable layout. RunPod's own pytorch images run /start.sh, which
 # would swallow our args.
@@ -120,13 +225,17 @@ async def _runpod(action, body, http, key):
         gpus = []
         for g in d.get("gpus", d if isinstance(d, list) else []):
             price = g.get("price") or {}
+            usd = price.get("secure") or price.get("community")
+            if not usd:
+                continue   # not rentable in either cloud right now
             gpus.append({
                 "id": g.get("id"),
                 "name": g.get("name") or g.get("id"),
                 "vram_gb": g.get("memory"),
-                "usd_hr": price.get("secure"),
-                "usd_hr_community": price.get("community"),
+                "usd_hr": usd,
+                "cloud": "SECURE" if price.get("secure") else "COMMUNITY",
             })
+        gpus.sort(key=lambda g: g["usd_hr"])
         return {"gpus": gpus}
 
     if action == "start":
@@ -149,7 +258,7 @@ async def _runpod(action, body, http, key):
         if rig.get("dataCenter"):
             req["dataCenterIds"] = [rig["dataCenter"]]
         d = await _jget(http, RUNPOD + "/pods", key, "POST", req)
-        return {"podId": d.get("id"), "status": (d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("cost")}
+        return {"podId": d.get("id"), "status": (d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("cost") or d.get("costPerHr")}
 
     pod_id = body.get("podId")
     if not pod_id:
@@ -268,13 +377,34 @@ async def handle(name, action, body, http=None):
             "error": f"no API key for {name}",
             "fix": f"set {ENV_KEYS.get(name, name.upper() + '_API_KEY')} or add it to providers.local.json",
         }
+    ensure_watchdog()
     try:
         if http is None:
             import aiohttp
             async with aiohttp.ClientSession() as s:
-                return 200, await fn(action, body, s, key)
-        return 200, await fn(action, body, http, key)
+                out = await fn(action, body, s, key)
+        else:
+            out = await fn(action, body, http, key)
     except RuntimeError as e:
         return 502, {"error": str(e)}
     except Exception as e:
         return 502, {"error": f"{name} {action} failed", "detail": str(e)}
+    # every started pod enters the watchdog; every status call is a touch
+    if action == "start" and out.get("podId"):
+        import time
+        rig = body.get("rig") or {}
+        WATCH[out["podId"]] = {
+            "provider": name,
+            "started": time.time(),
+            "last_used": time.time(),
+            "usd_hr": out.get("usd_hr") or 0,
+            "cooldown_s": int(float(rig.get("cooldownMin") or 30) * 60),
+            "cap_usd": float(rig.get("capUsd") or 0) or None,
+        }
+        _save_state()
+    elif action == "status":
+        touch(body.get("podId"))
+    elif action in ("stop", "terminate"):
+        WATCH.pop(body.get("podId"), None)
+        _save_state()
+    return 200, out

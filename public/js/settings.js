@@ -9,6 +9,8 @@ const DEFAULTS = {
   recallLatest: 1,      // outputs hung per workflow at boot from the disk scan
   splatBudget: 150000,  // XR splat decimation target; 0 = full resolution
   handStyle: 'dots',    // 'dots' (joint constellation) or 'robot' (segments)
+  runCooldownMin: 30,   // idle minutes before the watchdog stops a cloud pod
+  runCapUsd: 0,         // per-pod spend ceiling in USD; 0 = no cap
 };
 
 let S = { ...DEFAULTS };

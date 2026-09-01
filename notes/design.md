@@ -272,6 +272,21 @@ Others worth imagining:
   operator strolls the line. The most literal lean translation; maybe
   the right mode for a single huge workflow rather than for the
   constellation.
+- **Docked workstation (user, 2026-09-01)**: the workflow DAG loads
+  LOGICALLY into stations around a standing operator, an ergonomic
+  workbench you could run hours a day in a factory, everything you
+  need strategically placed. The interaction grammar to steal is the
+  Quest 2 main menu: a spherical GRID of docked slots centered on
+  the user, the active screen ahead, and when an action opens a new
+  screen it POPS INTO an existing slot adjacent to the screen that
+  spawned it. Applied here: pinching ADD NODE docks the palette into
+  the slot beside the node that asked for it; a gallery inspect
+  docks the provenance card into the next slot over; nothing ever
+  appears at an arbitrary ray distance. The slot grid gives spatial
+  meaning to "where did that panel go" the way the horizon gives it
+  to "where did that workflow go." This is ONE view among the modes
+  above, a value of the workflow-layout element of the mode tuple,
+  not a redesign; the anatomy below still governs.
 - **Orbital station (subgraph workstation, noted 2026-08-30)**: the
   DAG as the workstation itself. A spine carries the top-level
   workflow; each subgraph instance is a docked MODULE hanging off it.

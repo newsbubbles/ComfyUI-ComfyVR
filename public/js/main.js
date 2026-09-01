@@ -884,6 +884,10 @@ function buildSettings(pos) {
     cycleRow(`❖ VR SPLAT BUDGET · ${getSetting('splatBudget') ? Math.round(getSetting('splatBudget') / 1000) + 'K' : 'FULL'}`, 'splatBudget', SPLAT_STEPS, null),
     cycleRow(`✋ HANDS · ${getSetting('handStyle').toUpperCase()}`, 'handStyle', ['dots', 'robot'],
       () => applyHandStyle()),
+    // Run On knobs (the dedicated remote-runs submenu comes with the pod
+    // UI; these two are the money-safety floor and belong here NOW)
+    cycleRow(`⏻ POD COOLDOWN · ${getSetting('runCooldownMin')}M`, 'runCooldownMin', [15, 30, 60, 120], null),
+    cycleRow(`◎ POD SPEND CAP · ${getSetting('runCapUsd') ? '$' + getSetting('runCapUsd') : 'OFF'}`, 'runCapUsd', [0, 1, 5, 10, 25], null),
   ];
   const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true, floating: true });
   panel.placeFlat(scene, pos);

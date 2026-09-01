@@ -6,6 +6,7 @@
 // ComfyClient with its own websocket, so runs land in the same space in
 // parallel with the host's own.
 import { ComfyClient, LOCAL } from './comfy.js';
+import { getSetting } from './settings.js';
 
 let DESTS = [];
 try { DESTS = JSON.parse(localStorage.getItem('cvr-destinations') || '[]'); } catch (e) { /* fresh */ }
@@ -131,7 +132,13 @@ export async function startRig(rigId, onPhase) {
   if (!rig) throw new Error('no rig ' + rigId);
   const P = PROVIDERS[rig.provider];
   if (!P) throw new Error('no provider ' + rig.provider);
-  const { podId } = await P.start(rig);
+  // the watchdog contract rides in with the rig: idle cooldown and spend
+  // cap, rig override first, workspace settings as the default
+  const { podId } = await P.start({
+    ...rig,
+    cooldownMin: rig.cooldownMin ?? getSetting('runCooldownMin'),
+    capUsd: rig.capUsd ?? getSetting('runCapUsd'),
+  });
   upsertCloudDest(rig, { podId, url: null });
   const t0 = Date.now();
   for (;;) {
