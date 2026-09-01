@@ -230,6 +230,19 @@ export function parseWorkflow(json, schema, defCache = null) {
       const declaredW = (n.inputs || []).filter(i => i.widget).map(i => i.name);
       const byName = declaredW.length && declaredW.length === stored.length
         ? new Map(declaredW.map((nm, i) => [nm, stored[i]])) : null;
+      // Values the node's own manifest names (properties.models) are INTENDED,
+      // never stale: a workflow authored for a remote rig references models
+      // this machine may not have, and warm-up provides them. Snapping one to
+      // a random local file corrupts the workflow (a hunyuan DiT loader
+      // silently became an anime SDXL checkpoint). Keep it, mark remoteModel.
+      const manifestNames = new Set(((n.properties || {}).models || []).map(m => m && m.name).filter(Boolean));
+      const maybeSnap = (widget) => {
+        if (!(sc.liveOptions && widget.wtype === 'combo' && Array.isArray(widget.options)
+              && widget.options.length && !widget.options.includes(widget.value))) return;
+        if (manifestNames.has(widget.value)) { widget.remoteModel = true; return; }
+        widget.value = widget.options[0];
+        widget.substituted = true;
+      };
       for (const inp of sc.inputs) {
         if (inp.kind === 'autogrow') {
           for (const i of n.inputs || []) {
@@ -242,24 +255,16 @@ export function parseWorkflow(json, schema, defCache = null) {
           linkInputs.push({ name: inp.name, type: inp.type, link: declared ? declared.link : null });
         } else if (byName) {
           const widget = { ...inp, value: byName.has(inp.name) ? byName.get(inp.name) : defaultFor(inp) };
-          if (sc.liveOptions && inp.wtype === 'combo' && Array.isArray(inp.options) && inp.options.length
-              && !inp.options.includes(widget.value)) {
-            widget.value = inp.options[0];
-            widget.substituted = true;
-          }
+          maybeSnap(widget);
           widgets.push(widget);
         } else {
           const widget = { ...inp, value: vi < stored.length ? stored[vi] : defaultFor(inp) };
           vi++;
           // A stored combo value the server no longer offers (someone else's
           // checkpoint names, a deleted input file) would fail /prompt
-          // validation. Snap to the first real option and mark it, but only
-          // against options that came from a live object_info.
-          if (sc.liveOptions && inp.wtype === 'combo' && Array.isArray(inp.options) && inp.options.length
-              && !inp.options.includes(widget.value)) {
-            widget.value = inp.options[0];
-            widget.substituted = true;
-          }
+          // validation. Snap to the first real option and mark it, unless the
+          // manifest names it (remote model, warm-up provides it).
+          maybeSnap(widget);
           widgets.push(widget);
           if (inp.wtype === 'seed' && vi < stored.length && CONTROL_VALUES.includes(stored[vi])) {
             widgets.push({ name: 'control_after_generate', kind: 'widget', wtype: 'combo', options: CONTROL_VALUES, value: stored[vi], skipApi: true });
