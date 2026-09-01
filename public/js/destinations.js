@@ -10,7 +10,45 @@ import { getSetting } from './settings.js';
 
 let DESTS = [];
 try { DESTS = JSON.parse(localStorage.getItem('cvr-destinations') || '[]'); } catch (e) { /* fresh */ }
-const save = () => { try { localStorage.setItem('cvr-destinations', JSON.stringify(DESTS)); } catch (e) { /* private window */ } };
+
+// The server's registry.json is the shared truth: localStorage is
+// per-origin, and a rig set up on the desktop was invisible from the
+// headset origin. localStorage stays as cache and static-demo fallback.
+let syncing = false;
+function pushRegistry() {
+  if (syncing) return;
+  fetch(LOCAL + '/registry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destinations: DESTS, rigs: RIGS }),
+  }).catch(() => {});
+}
+
+export async function syncRegistry() {
+  try {
+    const r = await fetch(LOCAL + '/registry');
+    if (!r.ok) return false;
+    const d = await r.json();
+    syncing = true;
+    // server wins by id; local-only entries survive (they push back next save)
+    const merge = (local, remote) => {
+      const byId = new Map(local.map((x) => [x.id, x]));
+      for (const x of remote || []) byId.set(x.id, x);
+      return [...byId.values()];
+    };
+    DESTS = merge(DESTS, d.destinations);
+    RIGS = merge(RIGS, d.rigs);
+    syncing = false;
+    save();
+    saveRigs();
+    return true;
+  } catch (e) { syncing = false; return false; }   // static demo: no server
+}
+
+const save = () => {
+  try { localStorage.setItem('cvr-destinations', JSON.stringify(DESTS)); } catch (e) { /* private window */ }
+  pushRegistry();
+};
 
 const clients = new Map();   // dest id -> ComfyClient
 
@@ -72,7 +110,10 @@ export async function clientFor(dest, primary) {
 // Rigs are startable before queueing: warm the rig, then work.
 let RIGS = [];
 try { RIGS = JSON.parse(localStorage.getItem('cvr-rigs') || '[]'); } catch (e) { /* fresh */ }
-const saveRigs = () => { try { localStorage.setItem('cvr-rigs', JSON.stringify(RIGS)); } catch (e) { /* private window */ } };
+const saveRigs = () => {
+  try { localStorage.setItem('cvr-rigs', JSON.stringify(RIGS)); } catch (e) { /* private window */ }
+  pushRegistry();
+};
 
 export function listRigs() { return RIGS.slice(); }
 
@@ -120,6 +161,7 @@ const cloudAdapter = (name) => ({
   start: (rig) => providerCall(name, 'start', { rig }),
   status: (dest) => providerCall(name, 'status', { podId: dest.podId }),
   stop: (dest) => providerCall(name, 'stop', { podId: dest.podId }),
+  resume: (dest) => providerCall(name, 'resume', { podId: dest.podId }),
   terminate: (dest) => providerCall(name, 'terminate', { podId: dest.podId }),
 });
 
@@ -159,7 +201,7 @@ export async function stopDest(destId) {
   if (!d || d.kind !== 'cloud') throw new Error('not a cloud destination: ' + destId);
   const out = await PROVIDERS[d.provider].stop(d);
   const rig = RIGS.find((r) => r.id === d.rigId);
-  if (rig) upsertCloudDest(rig, { url: null });
+  if (rig) upsertCloudDest(rig, { url: null, stopped: true });
   return out;
 }
 
@@ -169,6 +211,6 @@ export async function terminateDest(destId) {
   if (!d || d.kind !== 'cloud') throw new Error('not a cloud destination: ' + destId);
   const out = await PROVIDERS[d.provider].terminate(d);
   const rig = RIGS.find((r) => r.id === d.rigId);
-  if (rig) upsertCloudDest(rig, { url: null, podId: null });
+  if (rig) upsertCloudDest(rig, { url: null, podId: null, stopped: false });
   return out;
 }

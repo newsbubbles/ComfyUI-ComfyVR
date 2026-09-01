@@ -162,6 +162,26 @@ def app_factory(backend: str) -> web.Application:
                 status=502,
             )
 
+    # Rigs and destinations, server-side: localStorage is per-origin, so
+    # anything set up on the desktop origin was invisible in the headset
+    # (8443) and vice versa. One json next to the server is the shared
+    # truth; the page keeps localStorage only as a cache and demo fallback.
+    REGISTRY = ROOT / "registry.json"
+
+    async def registry_get(request):
+        try:
+            return web.json_response(json.loads(REGISTRY.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return web.json_response({"destinations": [], "rigs": []})
+
+    async def registry_save(request):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise web.HTTPBadRequest(text="body must be JSON")
+        REGISTRY.write_text(json.dumps(body, indent=1), encoding="utf-8")
+        return web.json_response({"saved": True})
+
     # ---- destination relay ------------------------------------------------
     # The https headset page cannot fetch plain-http destinations (LAN
     # peers, vast pods): mixed content. The page registers the destination
@@ -382,6 +402,8 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_post("/local/layouts/{key}", layout_save)
     app.router.add_post("/local/stt", stt_proxy)
     app.router.add_post("/local/tts", tts_proxy)
+    app.router.add_get("/local/registry", registry_get)
+    app.router.add_post("/local/registry", registry_save)
     app.router.add_post("/local/provider/{name}/{action}", provider_call)
     app.router.add_post("/local/relay/register", relay_register)
     app.router.add_get("/local/relay/{rid}/ws", relay_ws)

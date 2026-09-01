@@ -203,9 +203,15 @@ def bootstrap_script(rig):
         "cd /workspace && (python3 -m http.server 8188 --bind 0.0.0.0 >/dev/null 2>&1 &)",
         "export DEBIAN_FRONTEND=noninteractive",
         "apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates || true",
+        # blender: CVR RigFit Hands shells it; apt's headless-capable
+        # build is enough for --background rig fitting
+        "which blender || apt-get install -y --no-install-recommends blender || echo BLENDER-FAILED",
         "pip install --no-cache-dir comfy-cli",
         # idempotent on a warm volume: install skips when ComfyUI exists
         f"[ -d /workspace/ComfyUI/.venv ] || {comfy} install --nvidia --fast-deps --skip-torch-or-directml",
+        # our own pack rides along: the comfyvr nodes (rig-fit) plus the
+        # /comfyvr routes on the pod; plain clone, the pack has no deps
+        "[ -d /workspace/ComfyUI/custom_nodes/ComfyUI-ComfyVR ] || git clone --depth 1 https://github.com/newsbubbles/ComfyUI-ComfyVR /workspace/ComfyUI/custom_nodes/ComfyUI-ComfyVR || echo PACK-FAILED comfyvr",
     ]
     # The workflow IS the manifest (notes/run-on.md): packs by registry id
     # via comfy-cli (never our own resolver), models by embedded url into
@@ -334,6 +340,11 @@ async def _runpod(action, body, http, key):
         await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "stop"})
         return {"status": "stopped"}
 
+    if action == "resume":
+        # an EXITED pod restarts in seconds with its disk intact
+        d = await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "start"})
+        return {"status": (d.get("status") or "starting").lower(), "usd_hr": d.get("cost")}
+
     if action == "terminate":
         await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "terminate"})
         return {"status": "terminated"}
@@ -411,6 +422,12 @@ async def _vast(action, body, http, key):
         await _jget(http, VAST + f"/instances/{pod_id}/", key, "PUT", {"state": "stopped"})
         return {"status": "stopped", "note": "vast may reassign the gpu; restart can hang, terminate is safer"}
 
+    if action == "resume":
+        # allowed, but the gpu may be gone; the caller sees the hang as
+        # a status that never reaches serving
+        await _jget(http, VAST + f"/instances/{pod_id}/", key, "PUT", {"state": "running"})
+        return {"status": "starting", "note": "vast resume can hang in scheduling if the gpu was reassigned"}
+
     if action == "terminate":
         await _jget(http, VAST + f"/instances/{pod_id}/", key, "DELETE")
         return {"status": "terminated"}
@@ -428,7 +445,7 @@ async def handle(name, action, body, http=None):
     fn = PROVIDERS.get(name)
     if fn is None:
         return 404, {"error": f"unknown provider '{name}'", "known": sorted(PROVIDERS)}
-    if action not in ("pricing", "start", "status", "stop", "terminate"):
+    if action not in ("pricing", "start", "status", "stop", "resume", "terminate"):
         return 400, {"error": f"unknown action '{action}'"}
     key = api_key(name)
     if not key:
@@ -459,6 +476,13 @@ async def handle(name, action, body, http=None):
             "usd_hr": out.get("usd_hr") or 0,
             "cooldown_s": int(float(rig.get("cooldownMin") or 30) * 60),
             "cap_usd": float(rig.get("capUsd") or 0) or None,
+        }
+        _save_state()
+    elif action == "resume" and body.get("podId"):
+        import time
+        WATCH[body["podId"]] = {
+            "provider": name, "started": time.time(), "last_used": time.time(),
+            "usd_hr": out.get("usd_hr") or 0, "cooldown_s": 1800, "cap_usd": None,
         }
         _save_state()
     elif action in ("stop", "terminate"):

@@ -179,6 +179,28 @@ try:
             _AGENT["pending"].pop(cid, None)
         return web.json_response(d)
 
+    # Rigs and destinations, server-side (localStorage is per-origin; the
+    # headset origin must see the same registry as the desktop).
+    _REGISTRY = os.path.join(ROOT, "registry.json")
+
+    @routes.get("/comfyvr/local/registry")
+    async def cvr_registry_get(request):
+        try:
+            with open(_REGISTRY, "r", encoding="utf-8") as fh:
+                return web.json_response(json.load(fh))
+        except (OSError, ValueError):
+            return web.json_response({"destinations": [], "rigs": []})
+
+    @routes.post("/comfyvr/local/registry")
+    async def cvr_registry_save(request):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise web.HTTPBadRequest(text="body must be JSON")
+        with open(_REGISTRY, "w", encoding="utf-8") as fh:
+            json.dump(body, fh, indent=1)
+        return web.json_response({"saved": True})
+
     # Cloud provider actions: the page never holds provider keys;
     # providers.py owns custody (env or gitignored providers.local.json).
     @routes.post("/comfyvr/local/provider/{name}/{action}")

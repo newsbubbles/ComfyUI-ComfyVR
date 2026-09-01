@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -913,6 +913,123 @@ function openSettings() {
   audio.accrete();
 }
 
+// ---------- run on picker: where should this workflow run ----------
+// Probe every podded cloud destination and heal stale state: a pod
+// warmed in a dead page never learned its url; a pod stopped or
+// terminated elsewhere must not read SERVING. onChange fires when
+// anything was healed, so open panels can rebuild.
+function probeCloudDests(onChange) {
+  for (const d of listDestinations()) {
+    if (d.kind !== 'cloud' || !d.podId) continue;
+    const rig = () => listRigs().find((r) => r.id === d.rigId);
+    const patch = (p) => { if (rig()) { upsertCloudDest(rig(), p); onChange?.(); } };
+    PROVIDERS[d.provider]?.status(d).then((st) => {
+      // patch ONLY on change: patch fires onChange, which rebuilds the
+      // open panel, which probes again; unconditional patching loops
+      if (st.url) { if (st.url !== d.url || d.stopped) patch({ url: st.url, usdHr: st.usd_hr, stopped: false }); }
+      else if (st.status === 'terminated') patch({ url: null, podId: null, stopped: false });
+      else if (/exited|stopped/i.test(st.status || '')) { if (!d.stopped || d.url) patch({ url: null, stopped: true }); }
+      else if (d.url) patch({ url: null });
+    }).catch((e) => {
+      if (/404|terminated/i.test(String(e.message || ''))) patch({ url: null, podId: null, stopped: false });
+      else if (d.url) patch({ url: null });
+    });
+  }
+}
+
+const destState = (d) => (d.url ? 'SERVING' : d.stopped ? 'STOPPED' : d.podId ? 'STARTING' : 'COLD');
+
+// After a resume, poll status until the pod serves, then bind the hub.
+async function waitServing(d, h) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((res) => setTimeout(res, 5000));
+    try {
+      const st = await PROVIDERS[d.provider].status(d);
+      if (st.url) {
+        const rig = listRigs().find((r) => r.id === d.rigId);
+        if (rig) upsertCloudDest(rig, { url: st.url, usdHr: st.usd_hr, stopped: false });
+        if (h) bindDest(h, d.id);
+        flashHint(d.name + ' is serving');
+        return;
+      }
+      flashHint(`${d.name}: ${st.status || 'starting'}...`);
+    } catch (e) { /* transient during restart */ }
+  }
+  flashHint(d.name + ' did not come back in 5 minutes · check the provider console');
+}
+
+function runOnLabel(h) {
+  if (!h.dest) return '▸ RUN ON · LOCAL';
+  const d = listDestinations().find((x) => x.id === h.dest);
+  return '▸ RUN ON · ' + (d ? d.name : String(h.dest)).toUpperCase();
+}
+
+let runOnPanel = null;
+function closeRunOnPicker() {
+  if (!runOnPanel) return;
+  if (hotPanel === runOnPanel) hotPanel = null;
+  runOnPanel.dispose();
+  runOnPanel = null;
+}
+
+function bindDest(h, destId) {
+  h.dest = destId;
+  if (h._destRow) { h._destRow.label = runOnLabel(h); h.corePanel?.dirty(); }
+  closeRunOnPicker();
+  flashHint(h.name + ' runs on ' + (destId ? destId : 'local'));
+  audio.toggle(true);
+}
+
+function openRunOnPicker(h) {
+  closeRunOnPicker();
+  probeCloudDests(() => { if (runOnPanel) openRunOnPicker(h); });
+  const dests = listDestinations();
+  const rows = [
+    readoutRow(() => 'where should ' + h.name + ' run', () => ''),
+    buttonRow('⌂ LOCAL', () => bindDest(h, null)),
+  ];
+  for (const d of dests) {
+    const state = d.kind === 'peer' ? 'PEER' : destState(d);
+    if (state === 'STOPPED') {
+      rows.push(buttonRow(`▸ RESUME ${d.name.toUpperCase()} · STOPPED`, () => {
+        closeRunOnPicker();
+        flashHint('resuming ' + d.name + ' (seconds, disk intact)');
+        PROVIDERS[d.provider].resume(d)
+          .then(() => waitServing(d, h))
+          .catch((e) => flashHint(String(e.message || e)));
+      }));
+      continue;
+    }
+    rows.push(buttonRow(`${d.kind === 'peer' ? '⬡' : '☁'} ${d.name.toUpperCase()} · ${state}`, () => {
+      if (d.kind === 'cloud' && !d.podId) { flashHint('that rig is cold · warm it below'); return; }
+      bindDest(h, d.id);
+    }));
+  }
+  // warm a cold rig FOR this workflow: its manifest rides into the
+  // bootstrap, so the pod comes up with this workflow's models and packs
+  for (const r of listRigs()) {
+    const d = dests.find((x) => x.id === 'cloud-' + r.id);
+    if (d?.podId) continue;
+    rows.push(buttonRow(`▸ WARM ${r.name.toUpperCase()} FOR ${h.name.toUpperCase()}`, () => {
+      closeRunOnPicker();
+      flashHint(`warming ${r.name} with ${h.name}'s models (cold start takes a while)`);
+      startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`), { manifest: workflowManifest(h.rawWorkflow()) })
+        .then((dd) => { bindDest(h, dd.id); flashHint(`${dd.name} is live · ${h.name} bound to it`); })
+        .catch((e) => flashHint(String(e.message || e)));
+    }));
+  }
+  rows.push(buttonRow('✕ CLOSE', () => closeRunOnPicker()));
+  const panel = new Panel({ title: 'run on', subtitle: h.name, accent: '#ffb86c', rows, worldWidth: 3.2, billboard: true, floating: true });
+  const at = h.corePanel?.mesh
+    ? h.corePanel.mesh.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0, 0.4))
+    : cam.pos.clone().add(forward().multiplyScalar(9));
+  panel.placeFlat(scene, at);
+  panel.mesh.userData.palette = true;
+  panel.dirty();
+  runOnPanel = panel;
+  audio.accrete();
+}
+
 // ---------- remote runs: destinations, rigs, and pods ----------
 // The dedicated submenu the Run On directives call for. Swaps in place
 // of the settings panel so it reads as submenu navigation; the floater
@@ -930,43 +1047,21 @@ function buildRemoteRuns(pos) {
   closeRemoteRuns();
   const dests = listDestinations();
   const rigs = listRigs();
-  // verify cloud liveness once per open: a pod stopped ELSEWHERE (the
-  // provider console, the watchdog, the spend cap) must not read LIVE
-  // forever. Clearing url makes the next pass skip the probe, so the
-  // rebuild chain converges.
-  for (const d of dests) {
-    if (d.kind !== 'cloud' || !d.podId) continue;
-    // probe every podded destination: a pod warmed in a page that has
-    // since closed never learned its url (the startRig poll died with
-    // the page), and a pod stopped elsewhere must not read LIVE. The
-    // panel is the recovery point either way.
-    const rig = () => listRigs().find((r) => r.id === d.rigId);
-    const patch = (p) => { if (rig()) { upsertCloudDest(rig(), p); if (remotePanel) rebuild(); } };
-    PROVIDERS[d.provider]?.status(d).then((st) => {
-      if (st.url && st.url !== d.url) patch({ url: st.url, usdHr: st.usd_hr });
-      else if (st.status === 'terminated') patch({ url: null, podId: null });
-      else if (!st.url && d.url) patch({ url: null });
-    }).catch((e) => {
-      // a definitive not-found means the pod is gone (terminated pods
-      // 404 upstream); a network blip only downgrades to not-serving
-      if (/404|terminated/i.test(String(e.message || ''))) patch({ url: null, podId: null });
-      else if (d.url) patch({ url: null });
-    });
-  }
+  probeCloudDests(() => { if (remotePanel) rebuild(); });
   const rows = [readoutRow(() => `${dests.length} destination${dests.length === 1 ? '' : 's'} · ${rigs.length} rig${rigs.length === 1 ? '' : 's'}`, () => '')];
+  // One action per row throughout (user feedback: no invisible click
+  // zones, ever; destructive actions get their own explicit row).
   for (const d of dests) {
-    if (d.kind === 'peer') {
-      // left of the row shows the address; the right edge removes
-      rows.push(buttonRow(`⬡ ${d.name.toUpperCase()} · PEER · ✕`, (frac) => {
-        if (frac > 0.8) { removeDestination(d.id); rebuild(); audio.toggle(false); }
-        else flashHint(d.url);
-      }));
-    }
+    if (d.kind !== 'peer') continue;
+    rows.push(buttonRow(`⬡ ${d.name.toUpperCase()} · PEER`, () => flashHint(d.url)));
+    rows.push(buttonRow(`✕ REMOVE PEER · ${d.name.toUpperCase()}`, () => {
+      removeDestination(d.id);
+      rebuild();
+      audio.toggle(false);
+    }));
   }
-  // One row per rig, showing the ACTUAL rig state (field feedback: a
-  // WARM button next to an already-running pod lies). Cold rig: the row
-  // warms it. Podded rig: the row is the stop control, with a two-tap
-  // terminate on the right edge.
+  // Rig rows reflect the ACTUAL state (a WARM button beside a running
+  // pod lies). Cold: warm. Podded: status, stop, and an armed terminate.
   for (const r of rigs) {
     const d = dests.find((x) => x.id === 'cloud-' + r.id);
     if (!d?.podId) {
@@ -978,26 +1073,35 @@ function buildRemoteRuns(pos) {
       }));
       continue;
     }
-    const st = d.url ? 'SERVING' : 'STARTING';
+    const st = destState(d);
     const cost = d.usdHr ? ` · $${d.usdHr}/H` : '';
-    const row = buttonRow(`■ STOP · ${r.name.toUpperCase()} · ${st}${cost} · ✕`, (frac) => {
-      if (frac > 0.85) {
-        if (row.armed) {
-          terminateDest(d.id)
-            .then(() => { flashHint('terminated ' + r.name + ' · all billing ended'); rebuild(); })
-            .catch((e) => flashHint(String(e.message || e)));
-        } else {
-          row.armed = true;
-          flashHint('tap ✕ again to TERMINATE (everything on the pod is lost)');
-          setTimeout(() => { row.armed = false; }, 3000);
-        }
+    rows.push(readoutRow(() => `☁ ${r.name.toUpperCase()} · ${st}${st === 'STOPPED' ? ' (disk only)' : cost}`, () => 'pod ' + (d.podId || '')));
+    if (st === 'STOPPED') {
+      rows.push(buttonRow(`▸ RESUME · ${r.name.toUpperCase()}`, () => {
+        flashHint('resuming ' + r.name + ' (seconds, disk intact)');
+        PROVIDERS[d.provider].resume(d)
+          .then(() => waitServing(d, null).then(() => rebuild()))
+          .catch((e) => flashHint(String(e.message || e)));
+      }));
+    } else {
+      rows.push(buttonRow(`■ STOP · ${r.name.toUpperCase()}`, () => {
+        stopDest(d.id)
+          .then(() => { flashHint('stopped ' + r.name + ' · gpu billing ended'); rebuild(); })
+          .catch((e) => flashHint(String(e.message || e)));
+      }));
+    }
+    const term = buttonRow(`✕ TERMINATE · ${r.name.toUpperCase()}`, () => {
+      if (!term.armed) {
+        term.armed = true;
+        flashHint('tap TERMINATE again · everything on the pod is lost');
+        setTimeout(() => { term.armed = false; }, 3500);
         return;
       }
-      stopDest(d.id)
-        .then(() => { flashHint('stopped ' + r.name + ' · gpu billing ended'); rebuild(); })
+      terminateDest(d.id)
+        .then(() => { flashHint('terminated ' + r.name + ' · all billing ended'); rebuild(); })
         .catch((e) => flashHint(String(e.message || e)));
     });
-    rows.push(row);
+    rows.push(term);
   }
   rows.push(buttonRow('✚ ADD PEER · NAME URL', () => {
     const row = { name: 'name http://host:8188', oneline: true, widget: { value: '' } };
@@ -1585,23 +1689,12 @@ function hubOpts() {
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onAddNode: (h) => openPaletteFree(h),
-    // ▸ RUN ON row: cycles the hub through local + every known destination.
-    // Always present so the feature is discoverable; the label IS the egress
-    // label (a hub bound elsewhere says so right above QUEUE).
+    // ▸ RUN ON row: opens a picker panel (one action per row, no cycling,
+    // no click zones). The label IS the egress label: a hub bound
+    // elsewhere says so right above QUEUE.
     destRow: (h) => {
-      const label = () => {
-        if (!h.dest) return '▸ RUN ON · LOCAL';
-        const d = listDestinations().find((x) => x.id === h.dest);
-        return '▸ RUN ON · ' + (d ? d.name : String(h.dest)).toUpperCase();
-      };
-      const row = buttonRow(label(), () => {
-        const ids = [null, ...listDestinations().map((d) => d.id)];
-        if (ids.length === 1) { flashHint('no other destinations yet · CVR.addPeer(name, url)'); return; }
-        h.dest = ids[(ids.indexOf(h.dest ?? null) + 1) % ids.length];
-        row.label = label();
-        h.corePanel.dirty();
-        audio.tick();
-      });
+      const row = buttonRow(runOnLabel(h), () => { openRunOnPicker(h); audio.tick(); });
+      h._destRow = row;
       return row;
     },
     onRecall: (h) => recallMore(h).catch((e) => flashHint('recall failed: ' + (e.message || e))),
@@ -1618,6 +1711,7 @@ function hubOpts() {
 
 async function boot() {
   audio.setMuted(getSetting('muted'));
+  syncRegistry();   // rigs/destinations from the server; fire-and-forget
   await client.detect();
   setStatus();
   client.onModeChange = setStatus;
