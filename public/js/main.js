@@ -1241,6 +1241,10 @@ function onClick(e) {
   const { panel, hub, gallery, rowInfo } = hit;
   if (gallery) {
     const item = hub.gallery.find(g => g.mesh === hit.object);
+    if (item?.asset && HANDS_GLB.test(item.asset.filename)) {  // wearables wear
+      wearFromOutput(item).catch(e => flashHint('wear failed: ' + (e.message || e)));
+      return;
+    }
     if (item?.asset) {  // placard <-> real 3D object
       toggleAsset(hub, item, audio, { xr: renderer.xr.isPresenting }).catch(e => flashHint('asset load failed: ' + (e.message || e)));
       return;
@@ -2179,6 +2183,10 @@ function xrSelectStart(st) {
   }
   if (hit.gallery) {
     const item = hit.hub?.gallery.find(g => g.mesh === hit.object);
+    if (item?.asset && HANDS_GLB.test(item.asset.filename)) {
+      wearFromOutput(item).catch((e) => flashHint('wear failed: ' + (e.message || e)));
+      return;
+    }
     if (item?.asset) { toggleAsset(hit.hub, item, audio, { xr: true }).catch(() => {}); return; }
     if (item?.video) { item.video.muted = !item.video.muted; item.video.play().catch(() => {}); return; }
     if (item?.audioEl) {
@@ -2295,6 +2303,21 @@ function xrControllersTick() {
       st.dot.visible = false;
     }
   }
+}
+
+// ---------- wearables from outputs ----------
+// The cvr_hands_*.glb convention (notes/space-packs.md): a workflow whose
+// output lands under this name made HANDS, so pinching its placard wears
+// it instead of standing it in the world. Take it off via ✋ HANDS in
+// settings (any style re-wears the default layer).
+const HANDS_GLB = /^cvr_hands_.*\.glb$/i;
+async function wearFromOutput(item) {
+  const url = client.viewURL(item.asset);
+  unwearHands();
+  const { makeSkinnedHands } = await import('./wearables.js');
+  for (let i = 0; i < 2; i++) worn[i] = await makeSkinnedHands(scene, url);
+  flashHint('wearing ' + item.asset.filename + ' · take off via ✋ HANDS in settings');
+  audio.toggle(true);
 }
 
 // ---------- fingertip poke (field request 2026-09-01) ----------

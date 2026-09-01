@@ -98,10 +98,25 @@ CVR.wearPose(joints) are the test hooks; /media static mount on the
 standalone server serves local test glbs. Twist stays unconstrained
 like the rigid driver.
 
-Remaining bricks: (3) make-hands workflow (t2i then Hunyuan3D
-image-to-mesh; nodes in core, model files to D: like TripoSplat);
-(4b) cvr_hands_*.glb output-dir convention: gallery placard offers
-WEAR, which calls the same makeSkinnedHands on the output url.
+RUNG 4B SHIPPED (2026-09-01): the WEAR convention is live. A
+cvr_hands_*.glb in a run's outputs gets a placard whose pinch WEARS
+it (both input paths, desktop click and XR select), fetched through
+the same /view url as any output. Verified through the real pick
+path with a synthetic primary-pointer click: placard -> branch ->
+two skinned hands in the scene. Take-off is the ✋ HANDS settings
+row. Deliberate limits, noted: disk recall stays PNG-only, so loose
+glbs on disk are not reachable until a workspace WARDROBE exists
+(wearables belong to the workspace, not a workflow; future piece);
+and outputs on a REMOTE destination resolve through the primary
+client's /view, the same known gap materialize has (fix rides the
+capabilities/contract work).
+
+The ladder now has ONE missing rung for the full flagship demo:
+(3) the make-hands workflow (t2i canonical open palm, Hunyuan3D
+image-to-mesh in core nodes, models to D:, save as cvr_hands_*.glb,
+rig-fit via tools/rigfit_hands.py between mesh and save; the
+rig-fit step wants either a small custom node shelling blender or a
+manual step until the space-pack node exists).
 
 Chaining note: steps 1-3 chain through images and meshes that today
 must round-trip through the output folder. Two bridging affordances
