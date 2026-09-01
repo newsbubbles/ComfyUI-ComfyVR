@@ -448,8 +448,8 @@ export class Hub {
     }
     if (extras?.media?.length && this.opts.mediaURL) {
       for (const m of extras.media) {
-        if (m.kind === 'video') this.addVideoGen(m, this.opts.mediaURL(m), { meta: extras?.meta || null });
-        else this.addAudioGen(m, this.opts.mediaURL(m), { meta: extras?.meta || null });
+        if (m.kind === 'video') this.addVideoGen(m, this.opts.mediaURL(m, this), { meta: extras?.meta || null });
+        else this.addAudioGen(m, this.opts.mediaURL(m, this), { meta: extras?.meta || null });
       }
       this.opts.audio?.chime();
     }

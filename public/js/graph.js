@@ -137,22 +137,22 @@ export function schemaFromObjectInfo(objectInfo, types) {
         if (Array.isArray(ts)) {
           // image_upload combos (LoadImage and friends) pick files from the
           // input dir; panels preview them via /view?type=input
-          inputs.push(w(name, 'combo', { options: ts, imageInput: !!cfg.image_upload }));
+          inputs.push(w(name, 'combo', { options: ts, imageInput: !!cfg.image_upload, default: cfg.default }));
         } else if (ts === 'COMBO' || Array.isArray(cfg.options)) {
           // New-style combo (V3 schema): type "COMBO" with options in the
           // config. Missing this turns the combo into a phantom link input,
           // which drops it from the widget list and shifts every stored
           // value after it into the wrong slot.
-          inputs.push(w(name, 'combo', { options: cfg.options || [], imageInput: !!cfg.image_upload }));
+          inputs.push(w(name, 'combo', { options: cfg.options || [], imageInput: !!cfg.image_upload, default: cfg.default }));
         } else if (ts === 'INT') {
           const seed = SEED_NAMES.includes(name) || cfg.control_after_generate;
-          inputs.push(w(name, seed ? 'seed' : 'int', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 1e9, 1e9), step: cfg.step ?? 1 }));
+          inputs.push(w(name, seed ? 'seed' : 'int', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 1e9, 1e9), step: cfg.step ?? 1, default: cfg.default }));
         } else if (ts === 'FLOAT') {
-          inputs.push(w(name, 'float', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 100, 1e6), step: cfg.step ?? 0.01 }));
+          inputs.push(w(name, 'float', { min: cfg.min ?? 0, max: Math.min(cfg.max ?? 100, 1e6), step: cfg.step ?? 0.01, default: cfg.default }));
         } else if (ts === 'STRING') {
-          inputs.push(w(name, 'text', { oneline: !cfg.multiline }));
+          inputs.push(w(name, 'text', { oneline: !cfg.multiline, default: cfg.default }));
         } else if (ts === 'BOOLEAN') {
-          inputs.push(w(name, 'toggle', {}));
+          inputs.push(w(name, 'toggle', { default: cfg.default }));
         } else if (typeof ts === 'string' && ts.includes('AUTOGROW')) {
           // V3 dynamic input group: the workflow node carries the real
           // sockets as dotted names (outputs.output0, outputs.output1, ...)
@@ -316,6 +316,10 @@ export function parseWorkflow(json, schema, defCache = null) {
 }
 
 function defaultFor(inp) {
+  // the schema's own default first: falling back to the numeric MINIMUM
+  // gave every palette-added KSampler steps 1, cfg 0, denoise 0 (and the
+  // first cloud test its 1x1 image) before this was caught
+  if (inp.default !== undefined && inp.default !== null) return inp.default;
   if (inp.wtype === 'combo') return (inp.options || [''])[0];
   if (inp.wtype === 'text') return '';
   if (inp.wtype === 'toggle') return false;

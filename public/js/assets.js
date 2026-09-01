@@ -96,7 +96,9 @@ export async function toggleAsset(hub, item, audio, { xr = false } = {}) {
   if (st.loading) return;
   st.loading = true;
   try {
-    const url = assetUrl(item.asset);
+    // dest-aware when the hub carries one (a pod-made mesh lives on the
+    // pod); assetUrl stays the primary-backend fallback
+    const url = hub.opts?.mediaURL ? hub.opts.mediaURL(item.asset, hub) : assetUrl(item.asset);
     const ext = item.asset.filename.split('.').pop().toLowerCase();
     let obj;
     if (SPLAT_EXTS.has(ext) || (ext === 'ply' && await isGaussianPly(url))) {

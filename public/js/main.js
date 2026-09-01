@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, cachedClient, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1354,7 +1354,7 @@ function onClick(e) {
   if (gallery) {
     const item = hub.gallery.find(g => g.mesh === hit.object);
     if (item?.asset && HANDS_GLB.test(item.asset.filename)) {  // wearables wear
-      wearFromOutput(item).catch(e => flashHint('wear failed: ' + (e.message || e)));
+      wearFromOutput(hub, item).catch(e => flashHint('wear failed: ' + (e.message || e)));
       return;
     }
     if (item?.asset) {  // placard <-> real 3D object
@@ -1693,7 +1693,10 @@ function hubOpts() {
     schema: SCHEMA,
     onLayout: scheduleLayoutSave,
     audioListener,
-    mediaURL: (m) => client.viewURL(m),
+    // outputs are fetched from the backend that MADE them: a hub bound
+    // to a destination views through that destination's client, so a
+    // pod-run wearable or video resolves on the pod, not the local dir
+    mediaURL: (m, h) => ((h?.dest && cachedClient(h.dest)) || client).viewURL(m),
     loadInputImage: (filename) =>
       client.mode === 'live' ? client.imageBitmap({ filename, subfolder: '', type: 'input' }) : null,
     onAddNode: (h) => openPaletteFree(h),
@@ -2286,7 +2289,7 @@ function xrSelectStart(st) {
   if (hit.gallery) {
     const item = hit.hub?.gallery.find(g => g.mesh === hit.object);
     if (item?.asset && HANDS_GLB.test(item.asset.filename)) {
-      wearFromOutput(item).catch((e) => flashHint('wear failed: ' + (e.message || e)));
+      wearFromOutput(hit.hub, item).catch((e) => flashHint('wear failed: ' + (e.message || e)));
       return;
     }
     if (item?.asset) { toggleAsset(hit.hub, item, audio, { xr: true }).catch(() => {}); return; }
@@ -2413,8 +2416,8 @@ function xrControllersTick() {
 // it instead of standing it in the world. Take it off via ✋ HANDS in
 // settings (any style re-wears the default layer).
 const HANDS_GLB = /^cvr_hands_.*\.glb$/i;
-async function wearFromOutput(item) {
-  const url = client.viewURL(item.asset);
+async function wearFromOutput(h, item) {
+  const url = ((h?.dest && cachedClient(h.dest)) || client).viewURL(item.asset);
   unwearHands();
   const { makeSkinnedHands } = await import('./wearables.js');
   for (let i = 0; i < 2; i++) worn[i] = await makeSkinnedHands(scene, url);

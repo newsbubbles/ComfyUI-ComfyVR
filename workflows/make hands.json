@@ -222,7 +222,7 @@
     6,
     "euler",
     "simple",
-    0
+    1
    ]
   },
   {
@@ -474,7 +474,7 @@
     "Node name for S&R": "EmptyLatentHunyuan3Dv2"
    },
    "widgets_values": [
-    1,
+    3072,
     1
    ]
   },
@@ -530,11 +530,11 @@
    "widgets_values": [
     0,
     "randomize",
-    1,
-    0,
+    30,
+    5.5,
     "euler",
     "simple",
-    0
+    1
    ]
   },
   {
@@ -577,8 +577,8 @@
     "Node name for S&R": "VAEDecodeHunyuan3D"
    },
    "widgets_values": [
-    1000,
-    16
+    8000,
+    256
    ]
   },
   {
@@ -617,7 +617,7 @@
    },
    "widgets_values": [
     "surface net",
-    -1
+    0.6
    ]
   },
   {

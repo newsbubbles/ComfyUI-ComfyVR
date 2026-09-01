@@ -83,6 +83,12 @@ async function relayBase(d) {
   return location.origin + LOCAL + '/relay/' + d.id;
 }
 
+// The already-connected client for a destination id, if any (sync;
+// clients are created lazily by the first queue against them).
+export function cachedClient(destId) {
+  return clients.get(typeof destId === 'string' ? destId : destId?.id) || null;
+}
+
 // The client for a destination, connected lazily. null/undefined = the
 // primary client the caller already holds (returned as-is for symmetry).
 export async function clientFor(dest, primary) {
