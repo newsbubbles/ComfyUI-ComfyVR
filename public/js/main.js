@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo, BUILTIN_SCHEMA } from './graph.js';
-import { Panel, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
+import { Panel, FLOATERS, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
@@ -643,7 +643,7 @@ function buildPalette() {
   const panel = new Panel({
     title: 'add node', subtitle: palette.drag ? palette.drag.type : 'any type',
     accent: palette.drag ? colorForType(palette.drag.type) : '#7ce8dc',
-    rows, worldWidth: 3.0, billboard: true,
+    rows, worldWidth: 3.0, billboard: true, floating: true,
   });
   panel.placeFlat(scene, palette.pos);
   panel.mesh.userData.palette = true;
@@ -805,7 +805,7 @@ function buildBrowser() {
     }) : [readoutRow(() => 'no matching workflows', () => '')]),
     ...(pages > 1 ? [buttonRow(`◂  ${browser.page + 1} / ${pages}  ▸`, (frac) => { browser.page += frac < 0.5 ? -1 : 1; buildBrowser(); audio.tick(); })] : []),
   ];
-  const panel = new Panel({ title: 'workflows', subtitle: String(wfIndex.length), accent: '#7ce8dc', rows, worldWidth: 3.6, billboard: true });
+  const panel = new Panel({ title: 'workflows', subtitle: String(wfIndex.length), accent: '#7ce8dc', rows, worldWidth: 3.6, billboard: true, floating: true });
   panel.placeFlat(scene, browser.pos);
   panel.mesh.userData.palette = true;   // same reachability rules as the palette
   panel.dirty();
@@ -885,7 +885,7 @@ function buildSettings(pos) {
     cycleRow(`✋ HANDS · ${getSetting('handStyle').toUpperCase()}`, 'handStyle', ['dots', 'robot'],
       () => applyHandStyle()),
   ];
-  const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true });
+  const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true, floating: true });
   panel.placeFlat(scene, pos);
   panel.mesh.userData.palette = true;   // always reachable, like the pickers
   panel.dirty();
@@ -1012,12 +1012,9 @@ function rebuildSpaceThreads() {
 // invisible or untouchable in ways that only surface in a headset —
 // settings shipped both ways before this existed.
 function floaters() {
-  const out = [];
-  if (palette) out.push(palette.panel);
-  if (browser) out.push(browser.panel);
-  if (kbd) out.push(kbd.panel);
-  if (settingsPanel) out.push(settingsPanel);
-  return out;
+  // panels built with {floating: true} enroll themselves on place and
+  // leave on dispose (FLOATERS in panels.js) — nothing to keep in sync
+  return [...FLOATERS];
 }
 
 function pickTargets() {
@@ -1290,7 +1287,7 @@ function openKbd(panel, row) {
     ...gridRows,
     bottomRow,
   ];
-  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.8, billboard: true });
+  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.8, billboard: true, floating: true });
   // place where the head actually looks (XR lesson: cam.yaw is stale while
   // presenting), a touch low so it reads like a tray under the node
   const head = camera.getWorldPosition(new THREE.Vector3());

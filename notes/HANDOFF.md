@@ -472,17 +472,22 @@ Key invariants to preserve:
 - Longer-term roadmap and deferrals live in `RELEASE.md` and
   `design.md`.
 
-### The floater refactor (due soon, 2026-09-01)
+### The floater refactor (DONE 2026-09-01)
 
 Settings shipped invisible (missing from the per-frame update list)
 and then untouchable (missing from pickTargets). Two hardcoded lists
 plus floatingPanel made three places a floating panel had to be
-enrolled by hand. Interim fix: floaters() in main.js is now the ONE
-list all three read. The real refactor when it is time: Panel
-registers itself on placeFlat/place and unregisters on dispose, so
-existing IS being enrolled — picking, updates, billboarding, and
-drag eligibility all derive from the registry, with per-panel flags
-(billboard, pickable, scale-with-distance) replacing the special
-cases (library, wrist, galleryCard). galleryCard is still outside
-floaters() deliberately: its note row would route into the editor
-with no widget behind it; give notes a readonly flag first.
+enrolled by hand. Now: FLOATERS in panels.js is a self-maintaining
+set. A panel built with {floating: true} joins on place/placeFlat
+and leaves on dispose, so EXISTING is being enrolled; picking,
+per-frame updates, billboarding, title-bar drag eligibility, and
+fingertip poke candidates all derive from it through floaters().
+Palette, browser, keyboard, and settings carry the flag. Verified:
+rebuild cycles (settings toggles dispose + recreate) hold the set at
+exactly one live instance. The invisible/untouchable bug class is
+structurally gone: a new floating panel is one constructor flag.
+
+Still special on purpose: wrist (XR-gated pick, must never be
+title-dragged off the arm), libraryPanel (fixture, not draggable),
+galleryCard (its note row would route into the editor with no
+widget behind it; give notes a readonly flag before enrolling it).

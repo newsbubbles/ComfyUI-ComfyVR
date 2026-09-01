@@ -81,10 +81,19 @@ function sectorGeometry(radius, arc, height, segs = 20) {
 
 let PANEL_SEQ = 1;
 
+// Free-floating panels register themselves here: EXISTING is being
+// enrolled. A panel built with {floating: true} joins on place/placeFlat
+// and leaves on dispose; picking, per-frame updates, billboarding, and
+// title-bar drag eligibility all derive from this one set (main.js
+// floaters()). Born from settings shipping invisible and then
+// untouchable: two hardcoded lists a new panel had to know about.
+export const FLOATERS = new Set();
+
 export class Panel {
   // rows: [{kind, ...}] — see builders below. worldWidth in scene units.
-  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false, deletable = false }) {
+  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false, deletable = false, floating = false }) {
     this.id = PANEL_SEQ++;
+    this.floating = floating;
     this.title = title; this.subtitle = subtitle; this.accent = accent;
     this.deletable = deletable;
     this.rows = rows;
@@ -140,6 +149,7 @@ export class Panel {
     hubGroup.add(this.mesh);
     this.placement = { r: -1, theta, y, arc: 0 };
     this.setPlacement(r, theta, y);
+    if (this.floating) FLOATERS.add(this);
     return this.mesh;
   }
 
@@ -161,6 +171,7 @@ export class Panel {
     this.mesh.userData.panel = this;
     this.mesh.renderOrder = 10;
     parent.add(this.mesh);
+    if (this.floating) FLOATERS.add(this);
     return this.mesh;
   }
 
@@ -506,6 +517,7 @@ export class Panel {
     if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.removeFromParent(); }
     this.mat.dispose(); this.tex.dispose();
     redrawQueue.delete(this);
+    FLOATERS.delete(this);
   }
 }
 
