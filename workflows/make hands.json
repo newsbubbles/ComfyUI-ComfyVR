@@ -355,7 +355,7 @@
     ]
    },
    "widgets_values": [
-    "hunyuan3d-dit-v2-0-fp16.safetensors"
+    "animeIllustDiffusion_v08.safetensors"
    ]
   },
   {
@@ -607,7 +607,8 @@
      "name": "MESH",
      "type": "MESH",
      "links": [
-      20
+      20,
+      21
      ],
      "slot_index": 0
     }
@@ -638,7 +639,7 @@
     {
      "name": "mesh",
      "type": "MESH,FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_OBJ,FILE_3D_FBX,FILE_3D_STL,FILE_3D_USDZ,FILE_3D_PLY,FILE_3D_SPLAT,FILE_3D_SPZ,FILE_3D_KSPLAT,FILE_3D_SPLAT_ANY,FILE_3D_POINT_CLOUD_ANY,FILE_3D",
-     "link": null
+     "link": 21
     }
    ],
    "outputs": [],
@@ -840,6 +841,14 @@
    16,
    0,
    "MESH"
+  ],
+  [
+   21,
+   14,
+   0,
+   15,
+   0,
+   "MESH"
   ]
  ],
  "groups": [],
@@ -848,49 +857,49 @@
   "comfyvr": {
    "layout": {
     "1": {
-     "theta": -0.9,
-     "r": 8,
-     "y": 0
+     "theta": -1.6128,
+     "y": 4.061,
+     "r": 8
     },
     "2": {
-     "theta": -0.65,
-     "r": 8,
-     "y": 0.8
+     "theta": -0.9966,
+     "y": 5.263,
+     "r": 8
     },
     "3": {
-     "theta": -0.65,
-     "r": 8,
-     "y": -0.8
+     "theta": -0.9966,
+     "y": 3.471,
+     "r": 8
     },
     "4": {
-     "theta": -0.65,
-     "r": 8,
-     "y": -2.2
+     "theta": -1.1003,
+     "y": 1.179,
+     "r": 8
     },
     "5": {
-     "theta": -0.4,
-     "r": 10,
-     "y": 0
+     "theta": -0.3542,
+     "y": 3.918,
+     "r": 10
     },
     "6": {
-     "theta": -0.18,
-     "r": 10,
-     "y": 0
+     "theta": -0.32,
+     "y": 1.326,
+     "r": 10
     },
     "7": {
-     "theta": 0,
-     "r": 10,
-     "y": 1.2
+     "theta": 0.5936,
+     "y": 5.102,
+     "r": 10
     },
     "8": {
-     "theta": 0.05,
-     "r": 8,
-     "y": -1.5
+     "theta": -0.1803,
+     "y": 0.6,
+     "r": 8
     },
     "9": {
-     "theta": 0.2,
-     "r": 10,
-     "y": 0
+     "theta": 0.111,
+     "y": 4.324,
+     "r": 10
     },
     "10": {
      "theta": 0.4,
@@ -903,34 +912,34 @@
      "y": -2
     },
     "12": {
-     "theta": 0.6,
-     "r": 12,
-     "y": 0
+     "theta": 0.5863,
+     "y": 1.85,
+     "r": 12
     },
     "13": {
-     "theta": 0.8,
-     "r": 12,
-     "y": 0
+     "theta": 0.9813,
+     "y": 4.788,
+     "r": 12
     },
     "14": {
-     "theta": 1,
-     "r": 12,
-     "y": 0
+     "theta": 0.997,
+     "y": 2.823,
+     "r": 12
     },
     "15": {
-     "theta": 1.2,
-     "r": 12,
-     "y": 1
+     "theta": 1.4023,
+     "y": 3.566,
+     "r": 12
     },
     "16": {
-     "theta": 1.2,
-     "r": 12,
-     "y": -1
+     "theta": 1.4043,
+     "y": 2.064,
+     "r": 12
     }
    }
   }
  },
  "version": 0.4,
  "last_node_id": 16,
- "last_link_id": 20
+ "last_link_id": 21
 }

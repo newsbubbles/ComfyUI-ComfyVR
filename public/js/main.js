@@ -2,7 +2,7 @@
 // queue. Desktop controls now; every interaction is expressed as ray +
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
-import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, schemaFromObjectInfo, BUILTIN_SCHEMA } from './graph.js';
+import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, linkTypeMatches, schemaFromObjectInfo, BUILTIN_SCHEMA } from './graph.js';
 import { Panel, FLOATERS, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
@@ -493,10 +493,10 @@ function finishLink(hit) {
   if (hit && hit.hub === drag.hub && hit.rowInfo?.kind === 'port') {
     const s = portSlotAt(hit);
     if (s && drag.mode === 'reverse') {
-      if (s.dir === 'out' && s.type === drag.type) drag.hub.commitNewLink(s.node.id, s.index, drag.dstNode, drag.dstSlot);
+      if (s.dir === 'out' && linkTypeMatches(s.type, drag.type)) drag.hub.commitNewLink(s.node.id, s.index, drag.dstNode, drag.dstSlot);
       return;
     }
-    if (s && s.dir === 'in' && s.type === drag.type) {
+    if (s && s.dir === 'in' && linkTypeMatches(drag.type, s.type)) {
       if (drag.mode === 'new') drag.hub.commitNewLink(drag.srcNode, drag.srcSlot, s.node.id, s.index);
       else drag.hub.retargetTo(drag.linkId, s.node.id, s.index);
       return;

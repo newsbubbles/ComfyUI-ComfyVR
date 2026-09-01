@@ -3,7 +3,7 @@
 // per topological depth, panels curved onto the ring cylinder facing the
 // core, beams arcing tier to tier, gallery of generations on the rim.
 import * as THREE from 'three';
-import { topoLayers, colorForType, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph, removeNodeFromGraph } from './graph.js';
+import { topoLayers, colorForType, linkTypeMatches, toApiFormat, randomizeSeeds, applySeedControls, syncToRaw, createLink, retargetLink, removeLink, addNodeToGraph, removeNodeFromGraph } from './graph.js';
 import { Panel, widgetRow, portRow, buttonRow, progressRow, imageRow, readoutRow, glyphRow, alertRow } from './panels.js';
 
 const R0 = 7;          // ring 0 radius
@@ -245,11 +245,11 @@ export class Hub {
     if (pending) {
       if (pending.reverse) {
         // the new node FEEDS an existing input (pulled from an empty socket)
-        const outSlot = node.outputs.findIndex(o => o.type === pending.type);
+        const outSlot = node.outputs.findIndex(o => linkTypeMatches(o.type, pending.type));
         if (outSlot >= 0) this.commitNewLink(node.id, outSlot, pending.dstNode, pending.dstSlot);
       } else {
-        const slot = node.linkInputs.findIndex(li => li.type === pending.type && li.link == null);
-        const use = slot >= 0 ? slot : node.linkInputs.findIndex(li => li.type === pending.type);
+        const slot = node.linkInputs.findIndex(li => linkTypeMatches(pending.type, li.type) && li.link == null);
+        const use = slot >= 0 ? slot : node.linkInputs.findIndex(li => linkTypeMatches(pending.type, li.type));
         if (use >= 0) this.commitNewLink(pending.srcNode, pending.srcSlot, node.id, use);
       }
     }

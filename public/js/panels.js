@@ -3,7 +3,7 @@
 // cylinder-sector mesh bent onto its ring (inward-facing, additive, no
 // depth). Substrate's renderer, schema-driven instead of accretor-driven.
 import * as THREE from 'three';
-import { colorForType } from './graph.js';
+import { colorForType, linkTypeMatches } from './graph.js';
 
 export const PW = 512;                      // canvas px width
 const PAD = 18;
@@ -280,7 +280,7 @@ export class Panel {
           const yy = y + ROW_H.port * (i + 0.5);
           const c = colorOr(s.type, A);
           const x = s.dir === 'in' ? PAD - 6 : W - PAD + 6;
-          const hinted = this.hint && this.hint.type === s.type && this.hint.dir === s.dir;
+          const hinted = this.hint && this.hint.dir === s.dir && linkTypeMatches(this.hint.type, s.type);
           if (hinted) {
             g.strokeStyle = c; g.lineWidth = 2;
             g.beginPath(); g.arc(x, yy, 9 + 2 * Math.sin(performance.now() / 150), 0, Math.PI * 2); g.stroke();

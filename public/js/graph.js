@@ -26,6 +26,16 @@ export function colorForType(t) {
   return hueHex(Math.abs(h) % 360);
 }
 
+// ComfyUI link-type compatibility: exact match, wildcard on either side,
+// or any overlap between comma-separated unions (SaveGLB's mesh input is
+// "MESH,FILE_3D_GLB,..." — strict equality left it unconnectable).
+export function linkTypeMatches(a, b) {
+  if (!a || !b) return false;
+  if (a === b || a === '*' || b === '*') return true;
+  const B = new Set(String(b).split(','));
+  return String(a).split(',').some(x => B.has(x));
+}
+
 function hueHex(hue) {
   const s = 0.7, l = 0.68;
   const a = s * Math.min(l, 1 - l);
@@ -430,7 +440,7 @@ export function createLink(graph, srcId, srcSlot, dstId, dstSlot) {
   const src = graph.nodes.get(srcId), dst = graph.nodes.get(dstId);
   if (!src || !dst) return null;
   const type = src.outputs[srcSlot]?.type;
-  if (!type || dst.linkInputs[dstSlot]?.type !== type) return null;
+  if (!type || !linkTypeMatches(type, dst.linkInputs[dstSlot]?.type)) return null;
   const old = dst.linkInputs[dstSlot].link;
   if (old != null) removeLink(graph, old);
   const id = Math.max(0, ...graph.links.keys(), graph.raw.last_link_id || 0) + 1;
@@ -445,7 +455,7 @@ export function retargetLink(graph, id, dstId, dstSlot) {
   const L = graph.links.get(id);
   if (!L) return null;
   const dst = graph.nodes.get(dstId);
-  if (!dst || dst.linkInputs[dstSlot]?.type !== L.type) return null;
+  if (!dst || !linkTypeMatches(L.type, dst.linkInputs[dstSlot]?.type)) return null;
   if (dstId === L.dst && dstSlot === L.dstSlot) return L;
   const oldDst = graph.nodes.get(L.dst);
   if (oldDst && oldDst.linkInputs[L.dstSlot]?.link === id) oldDst.linkInputs[L.dstSlot].link = null;
@@ -505,7 +515,7 @@ export function typesAccepting(schema, type, excludeType = null) {
   const out = [];
   for (const [t, sc] of Object.entries(schema)) {
     if (t === excludeType) continue;
-    if (sc.inputs.some(i => i.kind === 'link' && i.type === type)) out.push(t);
+    if (sc.inputs.some(i => i.kind === 'link' && linkTypeMatches(type, i.type))) out.push(t);
   }
   return out;
 }
@@ -516,7 +526,7 @@ export function typesProducing(schema, type, excludeType = null) {
   const out = [];
   for (const [t, sc] of Object.entries(schema)) {
     if (t === excludeType) continue;
-    if ((sc.outputs || []).includes(type)) out.push(t);
+    if ((sc.outputs || []).some(o => linkTypeMatches(o, type))) out.push(t);
   }
   return out;
 }
