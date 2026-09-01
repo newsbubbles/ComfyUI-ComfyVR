@@ -12,6 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
+import { listDestinations, addPeer, removeDestination, clientFor } from './destinations.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -1427,10 +1428,14 @@ async function queueHub(h) {
   }
   audio.queueSweep();
   try {
-    await client.queue(h);
+    // a hub bound to a destination runs THERE, in parallel with local
+    // runs: each destination client owns its own socket and prompt routing
+    const c = await clientFor(h.dest, client);
+    await c.queue(h);
     h.clearErrors();
     h.afterQueued();   // the queued run has its seeds; move them on
-    flashHint('queued ' + h.name + (client.mode === 'demo' ? ' (simulated)' : ''));
+    const where = h.dest ? ' on ' + (typeof h.dest === 'string' ? h.dest : h.dest.name) : '';
+    flashHint('queued ' + h.name + where + (c.mode === 'demo' ? ' (simulated)' : ''));
   } catch (e) {
     h.onStatus('error');
     h.reportQueueError(e);
@@ -2333,6 +2338,13 @@ window.CVR = {
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
   wearHands, unwearHands,
+  addPeer, listDestinations, removeDestination,
+  runOn: (hubName, destId) => {
+    const h = hubs.find(x => x.name.toLowerCase().includes(String(hubName).toLowerCase()));
+    if (!h) throw new Error('no hub ' + hubName);
+    h.dest = destId || null;
+    return `${h.name} runs on ${destId || 'local'}`;
+  },
   wearDemo: () => {
     if (!worn[0]) wearHands('robot');
     const at = cam.pos.clone().add(forward().multiplyScalar(1.1)).add(new THREE.Vector3(0, -0.15, 0));

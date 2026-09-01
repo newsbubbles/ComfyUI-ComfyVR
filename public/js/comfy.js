@@ -72,7 +72,13 @@ export function scanOutputsForAssets(output) {
 }
 
 export class ComfyClient {
-  constructor() {
+  // No base: the primary backend behind this page's own origin (proxy or
+  // hosted). With base (e.g. "http://peer:8199"): a REMOTE ComfyUI reached
+  // directly — a peer's box or a warmed cloud pod. Every instance owns its
+  // own websocket and prompt routing, so destinations run in parallel and
+  // each hub's events ride the right socket into the same space.
+  constructor(opts = {}) {
+    this.base = opts.base ? opts.base.replace(/\/+$/, '') : null;
     this.mode = 'demo';
     this.clientId = 'comfyvr-' + Math.random().toString(36).slice(2, 10);
     this.objectInfo = null;
@@ -81,9 +87,16 @@ export class ComfyClient {
     this.onModeChange = null;
   }
 
+  // Backend endpoint path -> URL. Remote comfy serves the same /api alias.
+  api(p) { return (this.base ? this.base + '/api' : API) + p; }
+
   async detect() {
     try {
-      if (HOSTED) {
+      if (this.base) {
+        // remote destination: probe it directly (it must allow CORS)
+        const r = await fetch(this.api('/prompt'));
+        if (r.ok) { this.backend = this.base; this.mode = 'live'; this.openSocket(); }
+      } else if (HOSTED) {
         // served by ComfyUI itself: alive by definition, but confirm cheaply
         const r = await fetch(API + '/prompt');
         if (r.ok) { this.backend = location.origin; this.mode = 'live'; this.openSocket(); }
@@ -104,7 +117,7 @@ export class ComfyClient {
     let live = {};
     if (this.mode === 'live') {
       try {
-        if (!this.objectInfo) this.objectInfo = await (await fetch(API + '/object_info')).json();
+        if (!this.objectInfo) this.objectInfo = await (await fetch(this.api('/object_info'))).json();
         live = schemaFromObjectInfo(this.objectInfo, types);
       } catch (e) {
         console.warn('object_info failed, using builtins', e);
@@ -131,7 +144,7 @@ export class ComfyClient {
   async listUserdataWorkflows() {
     if (this.mode !== 'live') return [];
     try {
-      const r = await fetch(API + '/userdata?dir=workflows&recurse=true&split=false');
+      const r = await fetch(this.api('/userdata?dir=workflows&recurse=true&split=false'));
       if (!r.ok) return [];
       const files = await r.json();
       return files
@@ -141,7 +154,7 @@ export class ComfyClient {
   }
 
   async loadUserdataWorkflow(path) {
-    const r = await fetch(API + '/userdata/' + encodeURIComponent(path));
+    const r = await fetch(this.api('/userdata/' + encodeURIComponent(path)));
     if (!r.ok) throw new Error('userdata ' + r.status);
     return await r.json();
   }
@@ -221,11 +234,11 @@ export class ComfyClient {
   async listOutputFiles() {
     if (this.mode !== 'live') return [];
     try {
-      const r = await fetch(HOSTED ? LOCAL + '/outputs' : API + '/comfyvr/local/outputs');
+      const r = await fetch(this.base ? this.api('/comfyvr/local/outputs') : HOSTED ? LOCAL + '/outputs' : API + '/comfyvr/local/outputs');
       if (r.ok) return await r.json();
     } catch (e) { /* comfyvr node not installed on the backend */ }
     try {
-      const r = await fetch(HOSTED ? '/internal/files/output' : API + '/internal/files/output');
+      const r = await fetch(this.base || !HOSTED ? this.api('/internal/files/output') : '/internal/files/output');
       if (!r.ok) return [];
       return (await r.json()).map(s => {
         const m = /^(.*) \[(\w+)\]$/.exec(s);
@@ -237,13 +250,13 @@ export class ComfyClient {
   async history(maxItems = 64) {
     if (this.mode !== 'live') return {};
     try {
-      const r = await fetch(API + '/history?max_items=' + maxItems);
+      const r = await fetch(this.api('/history?max_items=' + maxItems));
       return r.ok ? await r.json() : {};
     } catch (e) { return {}; }
   }
 
   viewURL(im) {
-    return `${API}/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type || 'output'}`;
+    return `${this.base ? this.base + '/api' : API}/view?filename=${encodeURIComponent(im.filename)}&subfolder=${encodeURIComponent(im.subfolder || '')}&type=${im.type || 'output'}`;
   }
 
   async imageBitmap(im) {
@@ -252,8 +265,10 @@ export class ComfyClient {
 
   // ---------- live path ----------
   openSocket() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    this.ws = new WebSocket(`${proto}://${location.host}/ws?clientId=${this.clientId}`);
+    const url = this.base
+      ? `${this.base.replace(/^http/, 'ws')}/ws?clientId=${this.clientId}`
+      : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?clientId=${this.clientId}`;
+    this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
     this.ws.onmessage = (ev) => this.onWsMessage(ev);
     this.ws.onclose = () => {
@@ -325,7 +340,7 @@ export class ComfyClient {
       client_id: this.clientId,
       extra_data: { extra_pnginfo: { workflow: hub.rawWorkflow() } },
     };
-    const r = await fetch(API + '/prompt', {
+    const r = await fetch(this.api('/prompt'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const j = await r.json();

@@ -114,6 +114,33 @@ VRAM sizing, DELEGATE resolution to comfy-cli on the pod." R2's
 provisioner is a thin orchestrator: pod lifecycle + comfy-cli calls
 + token proxy + network volume. R0 unchanged.
 
+## Architecture directives (user, 2026-09-01)
+
+- PARALLELISM IN THE UI: destinations run SIMULTANEOUSLY. A workflow
+  queued on a pod renders while another runs on the host GPU; each
+  hub binds to a destination, every hub's events ride its own
+  websocket into the same space. (And the same everything-over-
+  websockets shape is what later lets PEERS stand in one shared
+  workspace: presence rides the architecture for free.)
+- DESTINATION KINDS differ on setup, not on experience:
+  - local: the host backend, implicit, today's behavior.
+  - peer: just an accessible address with the API exposed (a friend
+    or second box, tailscale or LAN, started by its owner with
+    --listen and CORS open). NO provisioning, NO lifecycle. Cheapest
+    kind, ships first.
+  - cloud: provider + config; needs warm-up (installs + everything
+    the target workflow needs, delegated to comfy-cli) and
+    lifecycle (start, token, auto-stop, cost).
+- SAVED RIGS: known-working remote instance configs are first-class
+  and startable BEFORE queueing (warm the rig, then work). A rig =
+  provider + GPU tier + volume + the node packs and models it has
+  proven. Rig save happens after a successful run.
+- PROVIDER MODULARITY: cloud providers are pluggable adapters
+  behind one interface (start, stop, status, endpoint, cost/hr,
+  auth). Ship RunPod + Vast.ai first (the two names the comfy and
+  SD communities actually rent from, and both carry referral
+  programs), add others as requested.
+
 ## Money
 
 Affiliate programs are real and disclosure goes in the README:
