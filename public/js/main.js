@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, PROVIDERS, upsertCloudDest } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -888,6 +888,7 @@ function buildSettings(pos) {
     // UI; these two are the money-safety floor and belong here NOW)
     cycleRow(`⏻ POD COOLDOWN · ${getSetting('runCooldownMin')}M`, 'runCooldownMin', [15, 30, 60, 120], null),
     cycleRow(`◎ POD SPEND CAP · ${getSetting('runCapUsd') ? '$' + getSetting('runCapUsd') : 'OFF'}`, 'runCapUsd', [0, 1, 5, 10, 25], null),
+    buttonRow('⚡ REMOTE RUNS ▸', () => openRemoteRuns()),
   ];
   const panel = new Panel({ title: 'settings', subtitle: 'workspace', accent: '#7ce8dc', rows, worldWidth: 3.2, billboard: true, floating: true });
   panel.placeFlat(scene, pos);
@@ -899,6 +900,7 @@ function buildSettings(pos) {
 function openSettings() {
   closeBrowser();
   closePalette();
+  closeRemoteRuns();
   let pos;
   if (renderer.xr.isPresenting) {
     const head = camera.getWorldPosition(new THREE.Vector3());
@@ -908,6 +910,100 @@ function openSettings() {
     pos = cam.pos.clone().add(forward().multiplyScalar(11));
   }
   buildSettings(pos);
+  audio.accrete();
+}
+
+// ---------- remote runs: destinations, rigs, and pods ----------
+// The dedicated submenu the Run On directives call for. Swaps in place
+// of the settings panel so it reads as submenu navigation; the floater
+// registry handles pick/update/drag because the panel says floating.
+let remotePanel = null;
+function closeRemoteRuns() {
+  if (!remotePanel) return;
+  if (hotPanel === remotePanel) hotPanel = null;
+  remotePanel.dispose();
+  remotePanel = null;
+}
+
+function buildRemoteRuns(pos) {
+  const rebuild = () => buildRemoteRuns(remotePanel ? remotePanel.mesh.position.clone() : pos);
+  closeRemoteRuns();
+  const dests = listDestinations();
+  const rigs = listRigs();
+  // verify cloud liveness once per open: a pod stopped ELSEWHERE (the
+  // provider console, the watchdog, the spend cap) must not read LIVE
+  // forever. Clearing url makes the next pass skip the probe, so the
+  // rebuild chain converges.
+  for (const d of dests) {
+    if (d.kind !== 'cloud' || !d.url || !d.podId) continue;
+    const goCold = () => {
+      const rig = listRigs().find((r) => r.id === d.rigId);
+      if (rig) upsertCloudDest(rig, { url: null });
+      if (remotePanel) rebuild();
+    };
+    // a status error (terminated pod 404s upstream) means unreachable,
+    // which is COLD as far as a destination is concerned
+    PROVIDERS[d.provider]?.status(d).then((st) => { if (!st.url) goCold(); }).catch(goCold);
+  }
+  const rows = [readoutRow(() => `${dests.length} destination${dests.length === 1 ? '' : 's'} · ${rigs.length} rig${rigs.length === 1 ? '' : 's'}`, () => '')];
+  for (const d of dests) {
+    if (d.kind === 'peer') {
+      // left of the row shows the address; the right edge removes
+      rows.push(buttonRow(`⬡ ${d.name.toUpperCase()} · PEER · ✕`, (frac) => {
+        if (frac > 0.8) { removeDestination(d.id); rebuild(); audio.toggle(false); }
+        else flashHint(d.url);
+      }));
+    } else {
+      const live = !!d.url;
+      const cost = d.usdHr ? ` · $${d.usdHr}/H` : '';
+      rows.push(buttonRow(`☁ ${d.name.toUpperCase()} · ${live ? 'LIVE' + cost + ' · ■ STOP' : 'COLD'}`, (frac) => {
+        if (live && frac > 0.7) {
+          stopDest(d.id)
+            .then(() => { flashHint('stopped ' + d.name); rebuild(); })
+            .catch((e) => flashHint(String(e.message || e)));
+        } else flashHint(d.podId ? 'pod ' + d.podId : 'cold · warm its rig below');
+      }));
+    }
+  }
+  for (const r of rigs) {
+    rows.push(buttonRow(`▸ WARM RIG · ${r.name.toUpperCase()} · ${r.provider.toUpperCase()}`, () => {
+      flashHint('warming ' + r.name + ' (cold start can take many minutes)');
+      startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`))
+        .then((d) => { flashHint(`${d.name} is live`); rebuild(); })
+        .catch((e) => flashHint(String(e.message || e)));
+    }));
+  }
+  rows.push(buttonRow('✚ ADD PEER · NAME URL', () => {
+    const row = { name: 'name http://host:8188', oneline: true, widget: { value: '' } };
+    row.get = () => row.widget.value;
+    row.onChange = () => {
+      const m = String(row.widget.value).trim().match(/^(\S+)\s+(\S+)$/);
+      if (!m) { flashHint('format: name http://host:8188'); return; }
+      addPeer(m[1], m[2]);
+      flashHint('peer added · owner must run --listen with CORS open');
+      rebuild();
+      audio.accrete();
+    };
+    openEditor({ title: 'add peer', accent: '#7ce8dc', disposed: false, dirty() {} }, row);
+  }));
+  rows.push(buttonRow('⚙ BACK TO SETTINGS', () => {
+    const p = remotePanel.mesh.position.clone();
+    closeRemoteRuns();
+    buildSettings(p);
+    audio.tick();
+  }));
+  const panel = new Panel({ title: 'remote runs', subtitle: 'destinations · rigs', accent: '#ffb86c', rows, worldWidth: 3.4, billboard: true, floating: true });
+  panel.placeFlat(scene, pos);
+  panel.mesh.userData.palette = true;   // always reachable, like the pickers
+  panel.dirty();
+  remotePanel = panel;
+}
+
+function openRemoteRuns() {
+  const pos = settingsPanel ? settingsPanel.mesh.position.clone()
+    : cam.pos.clone().add(forward().multiplyScalar(11));
+  closeSettings();
+  buildRemoteRuns(pos);
   audio.accrete();
 }
 
@@ -2446,6 +2542,7 @@ window.CVR = {
   newWorkflow, createWorkflow,
   openBrowser, wf: () => browser, openWorkflow, closeWorkflow, showGalleryCard,
   openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
+  openRemoteRuns, remoteRuns: () => remotePanel,
   wearHands, unwearHands,
   addPeer, listDestinations, removeDestination,
   listRigs, saveRig, removeRig, stopDest,
