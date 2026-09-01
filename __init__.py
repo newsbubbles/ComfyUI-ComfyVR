@@ -4,7 +4,8 @@ Drop this repo into custom_nodes/ and ComfyUI grows a /comfyvr route —
 no separate server, no proxy, one origin. The frontend detects it is
 hosted and talks to ComfyUI's /api and /ws directly.
 
-Registers no nodes; it is pure routes.
+Also registers the comfyvr nodes (nodes.py); routes survive even if
+node registration fails.
 """
 import json
 import os
@@ -14,6 +15,13 @@ import time
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 WEB_DIRECTORY = None
+
+try:
+    from .nodes import NODE_CLASS_MAPPINGS as _N, NODE_DISPLAY_NAME_MAPPINGS as _D
+    NODE_CLASS_MAPPINGS.update(_N)
+    NODE_DISPLAY_NAME_MAPPINGS.update(_D)
+except Exception as _e:  # routes must survive a broken node import
+    print(f"[comfyvr] node registration skipped: {_e}")
 
 try:
     from aiohttp import web

@@ -144,9 +144,21 @@ def import_mesh(path):
         bpy.ops.import_scene.fbx(filepath=path)
     else:
         raise RuntimeError("unsupported mesh format: " + path)
-    new_meshes = [o for o in set(bpy.data.objects) - before if o.type == "MESH"]
+    imported = set(bpy.data.objects) - before
+    new_meshes = [o for o in imported if o.type == "MESH"]
     if not new_meshes:
         raise RuntimeError("no mesh in " + path)
+    # a re-imported rigged glb brings its old armature along; stale rigs
+    # poison the bind (armature ends up active, automatic weights no-op
+    # with zero groups), so strip everything that is not the mesh
+    for o in imported:
+        if o.type != "MESH":
+            bpy.data.objects.remove(o, do_unlink=True)
+    for o in new_meshes:
+        o.parent = None
+        for m in list(o.modifiers):
+            o.modifiers.remove(m)
+        o.vertex_groups.clear()
     # join multi-part imports into one bind target
     bpy.ops.object.select_all(action="DESELECT")
     for o in new_meshes:
@@ -165,6 +177,9 @@ def main():
         if argv[i] == "--test":
             opts["test"] = True
             i += 1
+        elif argv[i] == "--emit-test-mesh" and i + 1 < len(argv):
+            opts["emit"] = argv[i + 1]
+            i += 2
         elif argv[i] in ("--input", "--output") and i + 1 < len(argv):
             opts[argv[i][2:]] = argv[i + 1]
             i += 2
@@ -174,6 +189,15 @@ def main():
     out = opts.get("output") or "cvr_hands_out.glb"
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    if opts.get("emit"):
+        # write the UNRIGGED test hand and stop: input material for
+        # testing the full import -> fit -> bind path from a file
+        m = make_test_mesh()
+        bpy.ops.object.select_all(action="DESELECT")
+        m.select_set(True)
+        bpy.ops.export_scene.gltf(filepath=opts["emit"], use_selection=True, export_yup=True)
+        print("[rigfit] emitted unrigged test mesh", opts["emit"])
+        return
     mesh_obj = make_test_mesh() if test else import_mesh(opts["input"])
     arm_obj = build_template_armature()
     s = fit_to_mesh(arm_obj, mesh_obj)
