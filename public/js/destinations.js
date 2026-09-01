@@ -158,6 +158,7 @@ async function providerCall(name, action, body) {
 
 const cloudAdapter = (name) => ({
   pricing: () => providerCall(name, 'pricing'),
+  pods: () => providerCall(name, 'pods'),
   start: (rig) => providerCall(name, 'start', { rig }),
   status: (dest) => providerCall(name, 'status', { podId: dest.podId }),
   stop: (dest) => providerCall(name, 'stop', { podId: dest.podId }),
@@ -166,6 +167,31 @@ const cloudAdapter = (name) => ({
 });
 
 export const PROVIDERS = { runpod: cloudAdapter('runpod'), vast: cloudAdapter('vast') };
+
+// Reconcile every rig's pod state from the PROVIDER's own pod list, the
+// only truth that survives other sessions, other origins, the watchdog,
+// and the provider console. Pods match rigs by the comfyvr-<rigid> name
+// (vast: label). Returns true when anything changed.
+export async function refreshCloudStates() {
+  const providers = [...new Set(RIGS.map((r) => r.provider))];
+  let changed = false;
+  for (const prov of providers) {
+    let pods;
+    try { pods = (await PROVIDERS[prov].pods()).pods || []; } catch (e) { continue; }
+    for (const rig of RIGS.filter((r) => r.provider === prov)) {
+      const pod = pods.find((p) => p.name === 'comfyvr-' + rig.id);
+      const d = DESTS.find((x) => x.id === 'cloud-' + rig.id) || {};
+      const next = pod
+        ? { podId: pod.podId, url: pod.url || null, stopped: /exited|stopped/.test(pod.status), usdHr: pod.usd_hr ?? d.usdHr }
+        : { podId: null, url: null, stopped: false };
+      if (d.podId !== next.podId || d.url !== next.url || !!d.stopped !== next.stopped) {
+        upsertCloudDest(rig, next);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
 
 // Warm a rig into a live destination: start the pod, then poll until the
 // backend serves. onPhase gets every status tick for cold-start theater.

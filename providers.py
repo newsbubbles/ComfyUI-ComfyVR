@@ -268,6 +268,31 @@ async def _serves(http, url):
 
 # ---------------------------------------------------------------- runpod --
 async def _runpod(action, body, http, key):
+    if action == "pods":
+        # THE live truth for every session: cached page state went stale
+        # the moment another session (or the provider console) touched a
+        # pod. Pods are matched back to rigs by the comfyvr-<rigid> name.
+        import asyncio
+        d = await _jget(http, RUNPOD + "/pods", key)
+        pods = d.get("pods", d if isinstance(d, list) else [])
+        out = []
+        for p in pods:
+            st = (p.get("status") or "").lower()
+            out.append({
+                "podId": p.get("id"),
+                "name": p.get("name") or "",
+                "status": st,
+                "usd_hr": p.get("cost"),
+                "url": f"https://{p.get('id')}-8188.proxy.runpod.net" if st == "running" else None,
+            })
+        # a RUNNING pod is only useful once its ComfyUI answers
+        async def check(e):
+            if e["url"] and not await _serves(http, e["url"]):
+                e["status"] = "starting"
+                e["url"] = None
+        await asyncio.gather(*(check(e) for e in out))
+        return {"pods": out}
+
     if action == "pricing":
         d = await _jget(http, RUNPOD + "/catalog/gpus", key)
         gpus = []
@@ -352,6 +377,30 @@ async def _runpod(action, body, http, key):
 
 # ------------------------------------------------------------------ vast --
 async def _vast(action, body, http, key):
+    if action == "pods":
+        import asyncio
+        d = await _jget(http, VAST + "/instances/", key)
+        out = []
+        for inst in d.get("instances", []):
+            st = (inst.get("actual_status") or "provisioning").lower()
+            url = None
+            mapped = ((inst.get("ports") or {}).get("8188/tcp") or [{}])[0].get("HostPort")
+            if st == "running" and inst.get("public_ipaddr") and mapped:
+                url = f"http://{inst['public_ipaddr']}:{mapped}"
+            out.append({
+                "podId": str(inst.get("id")),
+                "name": inst.get("label") or "",
+                "status": "stopped" if st == "exited" else st,
+                "usd_hr": inst.get("dph_total"),
+                "url": url,
+            })
+        async def check(e):
+            if e["url"] and not await _serves(http, e["url"]):
+                e["status"] = "starting"
+                e["url"] = None
+        await asyncio.gather(*(check(e) for e in out))
+        return {"pods": out}
+
     if action == "pricing":
         q = {
             "verified": {"eq": True}, "rentable": {"eq": True},
@@ -445,7 +494,7 @@ async def handle(name, action, body, http=None):
     fn = PROVIDERS.get(name)
     if fn is None:
         return 404, {"error": f"unknown provider '{name}'", "known": sorted(PROVIDERS)}
-    if action not in ("pricing", "start", "status", "stop", "resume", "terminate"):
+    if action not in ("pricing", "pods", "start", "status", "stop", "resume", "terminate"):
         return 400, {"error": f"unknown action '{action}'"}
     key = api_key(name)
     if not key:

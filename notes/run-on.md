@@ -210,6 +210,47 @@ address and connects direct, no relay. The static GitHub Pages demo
 has no python behind it, so no relay there; it has no backend either,
 so nothing is lost.
 
+## Rig topology, the real shape (user, 2026-09-01, needs a session)
+
+The user's framing, recorded for the joint design session it needs:
+
+- Each rig has ITS OWN QUEUE. "Run on" means adding this workflow to
+  that rig's queue, alongside whatever else it is chewing on.
+- Two DISTINCT warm-ups exist and the UI must stop conflating them:
+  1. RIG warm-up: the machine itself (ComfyUI, blender, our pack,
+     base environment). Happens at pod creation.
+  2. WORKFLOW warm-up: what THIS workflow needs on THAT rig (packs,
+     models). From the workflow's side we do not know what is
+     already installed over there; binding a workflow to a live rig
+     may require installing missing pieces onto a RUNNING instance.
+- Installing onto a running rig: never ssh. The companion pack (our
+  own repo, already cloned onto pods by the bootstrap) is the seat:
+  a pod-side route that shells comfy-cli / drives Manager for packs
+  and `comfy model download` for models, driven from the space. The
+  workflow-warmup then becomes: diff the workflow manifest against
+  the rig's /object_info + model list, install the gap, report
+  phases into the space.
+- STATE TRUTH (fixed same day): pod state is now derived from the
+  provider's own pod list (`pods` action; pods matched to rigs by
+  the comfyvr-<rigid> name), never from cached page state. Any
+  session, any origin, the console, the watchdog: all converge.
+- Bootstrap runs at pod CREATION only, so a stopped husk warmed for
+  another purpose cannot serve a new workflow's needs; the picker
+  now offers WARM FRESH (terminate + recreate with this workflow's
+  manifest) beside RESUME.
+
+## Submenu docking (user, 2026-09-01)
+
+Submenus dock in the PARENT'S PLANE, beside it, same orientation
+(both billboard, so orientation follows). Never over the parent,
+never free-floating in gaze space. First pass: run-on picker places
+at parent edge + gap. The real design the user sketched: SLOT
+PACKING around the parent, quest-menu style, a rectangular packing
+of panel slots so every child panel pops into a free slot adjacent
+to what spawned it. That grammar belongs to the docked workstation
+view (design.md) and should become a shared placePanelNear()
+used by every submenu, picker, and card.
+
 ## Money
 
 Affiliate programs are real and disclosure goes in the README:

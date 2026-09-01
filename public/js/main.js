@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -914,29 +914,6 @@ function openSettings() {
 }
 
 // ---------- run on picker: where should this workflow run ----------
-// Probe every podded cloud destination and heal stale state: a pod
-// warmed in a dead page never learned its url; a pod stopped or
-// terminated elsewhere must not read SERVING. onChange fires when
-// anything was healed, so open panels can rebuild.
-function probeCloudDests(onChange) {
-  for (const d of listDestinations()) {
-    if (d.kind !== 'cloud' || !d.podId) continue;
-    const rig = () => listRigs().find((r) => r.id === d.rigId);
-    const patch = (p) => { if (rig()) { upsertCloudDest(rig(), p); onChange?.(); } };
-    PROVIDERS[d.provider]?.status(d).then((st) => {
-      // patch ONLY on change: patch fires onChange, which rebuilds the
-      // open panel, which probes again; unconditional patching loops
-      if (st.url) { if (st.url !== d.url || d.stopped) patch({ url: st.url, usdHr: st.usd_hr, stopped: false }); }
-      else if (st.status === 'terminated') patch({ url: null, podId: null, stopped: false });
-      else if (/exited|stopped/i.test(st.status || '')) { if (!d.stopped || d.url) patch({ url: null, stopped: true }); }
-      else if (d.url) patch({ url: null });
-    }).catch((e) => {
-      if (/404|terminated/i.test(String(e.message || ''))) patch({ url: null, podId: null, stopped: false });
-      else if (d.url) patch({ url: null });
-    });
-  }
-}
-
 const destState = (d) => (d.url ? 'SERVING' : d.stopped ? 'STOPPED' : d.podId ? 'STARTING' : 'COLD');
 
 // After a resume, poll status until the pod serves, then bind the hub.
@@ -980,12 +957,22 @@ function bindDest(h, destId) {
   audio.toggle(true);
 }
 
-function openRunOnPicker(h) {
+async function openRunOnPicker(h) {
   closeRunOnPicker();
-  probeCloudDests(() => { if (runOnPanel) openRunOnPicker(h); });
+  // rows are built from the PROVIDER's live pod list, never cached page
+  // state: another session, the watchdog, or the provider console may
+  // have touched the pod since this page last looked
+  buildRunOnPicker(h, true);
+  await refreshCloudStates().catch(() => {});
+  if (runOnPanel) buildRunOnPicker(h, false);
+}
+
+function buildRunOnPicker(h, checking) {
+  const keepPos = runOnPanel?.mesh?.position.clone();
+  closeRunOnPicker();
   const dests = listDestinations();
   const rows = [
-    readoutRow(() => 'where should ' + h.name + ' run', () => ''),
+    readoutRow(() => 'where should ' + h.name + ' run', () => (checking ? 'checking rigs...' : '')),
     buttonRow('⌂ LOCAL', () => bindDest(h, null)),
   ];
   for (const d of dests) {
@@ -1005,29 +992,50 @@ function openRunOnPicker(h) {
       bindDest(h, d.id);
     }));
   }
-  // warm a cold rig FOR this workflow: its manifest rides into the
-  // bootstrap, so the pod comes up with this workflow's models and packs
+  // warm a rig FOR this workflow: its manifest rides into the bootstrap,
+  // so the pod comes up with this workflow's models and packs. The
+  // bootstrap only runs at pod CREATION, so a stopped husk warmed for
+  // something else gets replaced, and the row says so.
   for (const r of listRigs()) {
     const d = dests.find((x) => x.id === 'cloud-' + r.id);
-    if (d?.podId) continue;
-    rows.push(buttonRow(`▸ WARM ${r.name.toUpperCase()} FOR ${h.name.toUpperCase()}`, () => {
+    if (d?.url || (d?.podId && !d?.stopped)) continue;   // live or starting: nothing to warm
+    const replacing = !!d?.podId;
+    const doWarm = () => {
       closeRunOnPicker();
       flashHint(`warming ${r.name} with ${h.name}'s models (cold start takes a while)`);
       startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`), { manifest: workflowManifest(h.rawWorkflow()) })
         .then((dd) => { bindDest(h, dd.id); flashHint(`${dd.name} is live · ${h.name} bound to it`); })
         .catch((e) => flashHint(String(e.message || e)));
+    };
+    rows.push(buttonRow(`▸ WARM ${replacing ? 'FRESH ' : ''}${r.name.toUpperCase()} FOR ${h.name.toUpperCase()}`, () => {
+      if (!replacing) return doWarm();
+      terminateDest(d.id)
+        .then(() => { flashHint('replaced the stopped pod'); doWarm(); })
+        .catch((e) => flashHint(String(e.message || e)));
     }));
   }
   rows.push(buttonRow('✕ CLOSE', () => closeRunOnPicker()));
   const panel = new Panel({ title: 'run on', subtitle: h.name, accent: '#ffb86c', rows, worldWidth: 3.2, billboard: true, floating: true });
-  const at = h.corePanel?.mesh
-    ? h.corePanel.mesh.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0, 0.4))
-    : cam.pos.clone().add(forward().multiplyScalar(9));
+  // submenus dock IN THE PARENT'S PLANE, beside it, never over it and
+  // never floating free in gaze space (user: think slot packing around
+  // the parent, the quest menu grammar; see design.md docked workstation)
+  let at;
+  if (keepPos) {
+    at = keepPos;   // a rebuild stays where the user may have dragged it
+  } else if (h.corePanel?.mesh) {
+    const pm = h.corePanel.mesh;
+    pm.updateWorldMatrix(true, false);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(pm.getWorldQuaternion(new THREE.Quaternion()));
+    at = pm.getWorldPosition(new THREE.Vector3())
+      .addScaledVector(right, h.corePanel.worldWidth / 2 + panel.worldWidth / 2 + 0.4);
+  } else {
+    at = cam.pos.clone().add(forward().multiplyScalar(9));
+  }
   panel.placeFlat(scene, at);
   panel.mesh.userData.palette = true;
   panel.dirty();
   runOnPanel = panel;
-  audio.accrete();
+  if (!keepPos) audio.accrete();
 }
 
 // ---------- remote runs: destinations, rigs, and pods ----------
@@ -1047,7 +1055,7 @@ function buildRemoteRuns(pos) {
   closeRemoteRuns();
   const dests = listDestinations();
   const rigs = listRigs();
-  probeCloudDests(() => { if (remotePanel) rebuild(); });
+  refreshCloudStates().then((chg) => { if (chg && remotePanel) rebuild(); }).catch(() => {});
   const rows = [readoutRow(() => `${dests.length} destination${dests.length === 1 ? '' : 's'} · ${rigs.length} rig${rigs.length === 1 ? '' : 's'}`, () => '')];
   // One action per row throughout (user feedback: no invisible click
   // zones, ever; destructive actions get their own explicit row).
