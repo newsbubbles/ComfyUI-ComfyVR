@@ -150,10 +150,11 @@ def ensure_watchdog():
     except RuntimeError:
         pass  # no loop yet; next call from a request context will succeed
 
-# Torch preinstalled, empty entrypoint (args become the command verbatim),
-# predictable layout. RunPod's own pytorch images run /start.sh, which
-# would swallow our args.
-DEFAULT_IMAGE = "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime"
+# RunPod's own pytorch image: pre-cached on their hosts (docker hub pulls
+# of third-party images stalled a community pod for 17 minutes at first
+# light), torch preinstalled, and its /start.sh lives in CMD, so a v1
+# dockerStartCmd REPLACES it cleanly (no jupyter/ssh, just our bootstrap).
+DEFAULT_IMAGE = "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
 
 
 def api_key(name):
@@ -175,13 +176,24 @@ def bootstrap_script(rig):
     core app only; workflow deps (install-deps) and model downloads join
     once the workflow file transfer lands. Model files persist on the
     network volume at /workspace between runs of the same rig.
+
+    While installing, a stdlib http.server on 8188 serves /workspace so
+    boot.log is readable through the provider's own ingress: live eyes
+    on cold start from outside, no ssh, and later the raw feed for
+    cold-start theater in the space. It dies right before ComfyUI takes
+    the port; the readiness probe only trusts /system_stats, which the
+    log server 404s, so warming can never read as serving.
     """
     lines = [
-        "set -ex",
+        "set -x",
+        "mkdir -p /workspace",
+        "exec > /workspace/boot.log 2>&1",
+        "cd /workspace && (python3 -m http.server 8188 --bind 0.0.0.0 >/dev/null 2>&1 &)",
         "export DEBIAN_FRONTEND=noninteractive",
         "apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates || true",
         "pip install --no-cache-dir comfy-cli",
         "comfy --skip-prompt --workspace=/workspace/ComfyUI install --nvidia --fast-deps --skip-torch-or-directml",
+        "pkill -f 'http.server 8188' || true",
         "comfy --skip-prompt --workspace=/workspace/ComfyUI launch -- --listen 0.0.0.0 --port 8188 --enable-cors-header '*'",
     ]
     for extra in rig.get("bootExtra") or []:
@@ -194,7 +206,8 @@ def _boot_b64(rig):
 
 
 async def _jget(http, url, key, method="GET", body=None, bearer=True):
-    headers = {"Authorization": ("Bearer " + key) if bearer else key}
+    # cloudflare fronts both providers and 403s anonymous-looking UAs
+    headers = {"Authorization": ("Bearer " + key) if bearer else key, "User-Agent": "comfyvr/0.1"}
     if body is not None:
         headers["Content-Type"] = "application/json"
     async with http.request(method, url, headers=headers, json=body) as r:
@@ -240,25 +253,42 @@ async def _runpod(action, body, http, key):
 
     if action == "start":
         rig = body.get("rig") or {}
+        # FIRST LIGHT FINDING (2026-09-01): v2 create accepts an `args`
+        # string but does NOT shell-split it; the container execs the
+        # whole string as one binary name and crash-loops (status RUNNING,
+        # cpu 0, uptime negative). v1 still has dockerStartCmd as a real
+        # argv, so CREATE rides v1 until v2 grows an equivalent; v1
+        # retires 2026-11-15, revisit before then (template or baked
+        # image are the v2-native outs). Status/stop/terminate stay v2
+        # and work on v1-created pods (same pod store).
         req = {
             "name": "comfyvr-" + (rig.get("id") or rig.get("name") or "rig"),
-            "image": rig.get("image") or DEFAULT_IMAGE,
-            "gpu": {"id": rig.get("gpuType") or "NVIDIA GeForce RTX 4090", "count": 1},
-            "disk": int(rig.get("disk") or 50),
+            "imageName": rig.get("image") or DEFAULT_IMAGE,
+            # ordered preference list; a single gpuType is the one-item case
+            "gpuTypeIds": rig.get("gpuTypes") or [rig.get("gpuType") or "NVIDIA GeForce RTX 4090"],
+            "gpuCount": 1,
+            "containerDiskInGb": int(rig.get("disk") or 50),
             "ports": ["8188/http"],
-            "cloud": rig.get("cloud") or "SECURE",
+            "cloudType": rig.get("cloud") or "SECURE",
             "env": {"CVR_BOOT": _boot_b64(rig)},
-            # v2 has no dockerStartCmd; entrypoint of DEFAULT_IMAGE is
-            # empty so args become the command. How v2 splits this
-            # string is the first thing to confirm at live first light.
-            "args": "bash -c 'echo $CVR_BOOT | base64 -d | bash'",
+            "dockerStartCmd": ["bash", "-c", "echo $CVR_BOOT | base64 -d | bash"],
         }
         if rig.get("volumeId"):
-            req["mounts"] = {"network": [{"volumeId": rig["volumeId"], "path": "/workspace"}]}
+            req["networkVolumeId"] = rig["volumeId"]
         if rig.get("dataCenter"):
             req["dataCenterIds"] = [rig["dataCenter"]]
-        d = await _jget(http, RUNPOD + "/pods", key, "POST", req)
-        return {"podId": d.get("id"), "status": (d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("cost") or d.get("costPerHr")}
+        try:
+            d = await _jget(http, "https://rest.runpod.io/v1/pods", key, "POST", req)
+        except RuntimeError as e:
+            # SECURE stock for cheap SKUs runs dry routinely (first light hit
+            # this across five types); COMMUNITY usually has them. Fall back
+            # once unless the rig pinned a cloud explicitly.
+            if "no instances currently available" in str(e).lower() and not rig.get("cloud"):
+                req["cloudType"] = "COMMUNITY"
+                d = await _jget(http, "https://rest.runpod.io/v1/pods", key, "POST", req)
+            else:
+                raise
+        return {"podId": d.get("id"), "status": (d.get("desiredStatus") or d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("costPerHr") or d.get("cost")}
 
     pod_id = body.get("podId")
     if not pod_id:

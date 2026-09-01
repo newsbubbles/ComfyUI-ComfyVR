@@ -195,6 +195,43 @@ Affiliate programs are real and disclosure goes in the README:
 This monetizes without charging anyone: the user pays the provider
 what they would pay anyway; the ref code is in the link we open.
 
+## First light log (2026-09-01, live pods on the user's account)
+
+Four pods to a diagnosis; each attempt taught one non-guessable fact:
+
+1. v2 create accepts `args` but does not shell-split it: the container
+   execs the whole string as one binary and crash-loops showing
+   status RUNNING, cpu 0, NEGATIVE uptime. That triple is the
+   crash-loop signature. Create moved to v1 dockerStartCmd (a real
+   argv); v1 dies 2026-11-15, so pre-baked image or template before
+   then. Status/stop/terminate stay v2 and work on v1 pods.
+2. SECURE stock for cheap SKUs (five types!) can be zero; COMMUNITY
+   had them instantly. Adapter now falls back SECURE -> COMMUNITY on
+   "no instances" unless the rig pins a cloud. gpuTypeIds is an
+   ordered preference list; pass several.
+3. Cloudflare fronts api.runpod.io AND proxy.runpod.net and 403s
+   anonymous UAs. Always send a User-Agent (adapter does).
+4. THE BIG ONE, seen only after making cold start observable:
+   `comfy install` creates its OWN venv at <workspace>/.venv, so any
+   torch preinstalled in the image is irrelevant and
+   --skip-torch-or-directml does not prevent uv resolving torch
+   (502MB) plus the nvidia wheel stack (cublas 403MB, cudnn 349MB,
+   cufft 204MB, nccl 196MB, cusolver 191MB, triton 188MB...): about
+   2.5-3GB of python deps at a few MB/s. A from-scratch cold start
+   is therefore 15-20 MINUTES no matter the image; the 12-minute
+   polls were giving up on HEALTHY pods. The fix hierarchy: network
+   volume holding the venv + models (warm start skips everything),
+   then a baked image with ComfyUI preinstalled; image choice alone
+   buys almost nothing.
+
+The observability trick that cracked it, worth keeping as a feature:
+the bootstrap logs everything to boot.log and serves /workspace with
+a stdlib http.server on 8188 UNTIL ComfyUI takes the port, so the
+provider's own https ingress shows live install progress with no ssh.
+The readiness probe only trusts /system_stats (which http.server
+404s), so warming can never read as serving. This is literally the
+data feed for cold-start theater in the space.
+
 ## Risks
 
 - Cold start is the product killer if naive (5-15 min). Docker base

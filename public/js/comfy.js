@@ -270,10 +270,42 @@ export class ComfyClient {
       : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?clientId=${this.clientId}`;
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
+    this.ws.onopen = () => this.reconcile();
     this.ws.onmessage = (ev) => this.onWsMessage(ev);
     this.ws.onclose = () => {
       if (this.mode === 'live') setTimeout(() => this.openSocket(), 3000);
     };
+  }
+
+  // A prompt can finish while the socket is still handshaking (an instant
+  // workflow on a fresh cloud destination: TLS + proxy lose the race) or
+  // while a proxy drops the ws mid-run; those events are simply gone.
+  // On every socket open, replay pending prompts from /history and
+  // synthesize what was missed. First light caught this live: the pod
+  // completed in milliseconds and the space stayed at "queued" forever.
+  async reconcile() {
+    for (const [pid, hub] of [...this.prompts]) {
+      try {
+        const r = await fetch(this.api('/history/' + pid));
+        if (!r.ok) continue;
+        const h = (await r.json())[pid];
+        if (!h || !h.status?.completed) continue;   // events are still coming
+        for (const [nodeId, output] of Object.entries(h.outputs || {})) {
+          const bitmaps = [];
+          for (const im of (output.images || []).slice(0, 4)) {
+            try { bitmaps.push(await this.imageBitmap(im)); }
+            catch (e) { console.warn('view fetch failed', e); }
+          }
+          hub.onExecuted(nodeId, bitmaps, scanOutputsForAssets(output), {
+            meta: this.promptMeta?.get(pid) || null,
+            media: scanOutputsForMedia(output),
+          });
+        }
+        hub.onStatus(h.status.status_str === 'success' ? 'done' : 'error');
+        this.prompts.delete(pid);
+        this.promptMeta?.delete(pid);
+      } catch (e) { /* backend hiccup; the next open retries */ }
+    }
   }
 
   hubFor(promptId) { return this.prompts.get(promptId || this.currentPrompt); }
