@@ -2572,6 +2572,14 @@ window.CVR = {
   openSettings, settings: () => settingsPanel, recallFromDisk, recallMore, diskIndex: () => diskIndex,
   openRemoteRuns, remoteRuns: () => remotePanel,
   wearHands, unwearHands,
+  wearPose: (joints) => { worn[0]?.update(joints); return 'posed'; },
+  wearSkinned: async (url = '/media/cvr_hands_test.glb') => {
+    unwearHands();
+    const { makeSkinnedHands } = await import('./wearables.js');
+    for (let i = 0; i < 2; i++) worn[i] = await makeSkinnedHands(scene, url);
+    flashHint('wearing: skinned glb');
+    return 'skinned hands on';
+  },
   addPeer, listDestinations, removeDestination,
   listRigs, saveRig, removeRig, stopDest, terminateDest,
   manifest: async (hubName) => {

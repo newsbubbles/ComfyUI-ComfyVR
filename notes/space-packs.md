@@ -84,13 +84,24 @@ bones empty; subdivided passes), so generated meshes should keep a
 few thousand verts at bind time. Usage:
   blender --background --python tools/rigfit_hands.py -- \
     --input hand.(obj|glb|fbx) --output cvr_hands_x.glb
+RUNG FOUR DRIVER SHIPPED (2026-09-01): makeSkinnedHands in
+wearables.js loads any rig-fit glb and drives its 24 bones the way
+the rigid driver works: each bone posed ABSOLUTELY from its joint
+pair (position at the proximal joint, blender bone +Y aligned to
+the segment), so live hand proportions never accumulate error down
+a chain and the bone-axis convention swamp never opens. Verified on
+desktop with the self-test glb: worn, posed by the fake rig, and a
+curled index deforms the MESH (the skinned mesh's object node stays
+at origin while the surface renders 130 units away at the bones,
+which is proof of pure skin deformation). CVR.wearSkinned(url) +
+CVR.wearPose(joints) are the test hooks; /media static mount on the
+standalone server serves local test glbs. Twist stays unconstrained
+like the rigid driver.
+
 Remaining bricks: (3) make-hands workflow (t2i then Hunyuan3D
 image-to-mesh; nodes in core, model files to D: like TripoSplat);
-(4) cvr_hands_*.glb output convention, placard offers WEAR,
-skinned-glb driver joins wearables.js beside the rigid one. The
-driver's fiddly part will be bone-axis convention (blender +Y along
-bone vs XR joint frames); drive it like makeDebugHands does, from
-joint PAIR world positions, not joint orientations.
+(4b) cvr_hands_*.glb output-dir convention: gallery placard offers
+WEAR, which calls the same makeSkinnedHands on the output url.
 
 Chaining note: steps 1-3 chain through images and meshes that today
 must round-trip through the output folder. Two bridging affordances

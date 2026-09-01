@@ -390,6 +390,8 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_post("/local/agent/call", agent_call)
     app.router.add_get("/ws", ws_proxy)
     app.router.add_route("*", "/api/{path:.*}", proxy)
+    (ROOT / "media").mkdir(exist_ok=True)
+    app.router.add_static("/media", ROOT / "media")   # local test assets (gitignored)
     app.router.add_static("/", PUBLIC)
     return app
 

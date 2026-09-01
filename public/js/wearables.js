@@ -78,6 +78,62 @@ export function makeDebugHands(scene) {
   };
 }
 
+// The skinned wearable: a glb from tools/rigfit_hands.py (24 bones named
+// by their distal WebXR joint). Bones are driven ABSOLUTELY from joint
+// pair world positions, the same way the rigid segments are: position at
+// the proximal joint, +Y (the blender bone axis) aligned to the segment.
+// No reliance on rest offsets means live hand proportions never
+// accumulate error down a chain; twist stays unconstrained, like the
+// rigid driver, which hands mostly forgive.
+export async function makeSkinnedHands(scene, url) {
+  const { GLTFLoader } = await import('../vendor/GLTFLoader.js');
+  const gltf = await new GLTFLoader().loadAsync(url);
+  const root = gltf.scene;
+  let skinned = null;
+  root.traverse((o) => { if (o.isSkinnedMesh && !skinned) skinned = o; });
+  if (!skinned) throw new Error('no skinned mesh in ' + url);
+  skinned.frustumCulled = false;
+  const bones = {};
+  for (const b of skinned.skeleton.bones) bones[b.name] = b;
+  const group = new THREE.Group();
+  group.visible = false;
+  group.add(root);
+  scene.add(group);
+  const _q = new THREE.Quaternion();
+  const _m = new THREE.Matrix4(), _mi = new THREE.Matrix4();
+  const _one = new THREE.Vector3(1, 1, 1);
+  return {
+    group,
+    update(joints) {
+      const wrist = joints?.wrist;
+      if (!wrist || wrist.visible === false) { group.visible = false; return; }
+      group.visible = true;
+      for (const chain of CHAINS) {
+        for (let i = 1; i < chain.length; i++) {
+          const b = bones[chain[i]];
+          const A = joints[chain[i - 1]], B = joints[chain[i]];
+          if (!b || !A || !B) continue;
+          _a.setFromMatrixPosition(A.matrixWorld);
+          _b.setFromMatrixPosition(B.matrixWorld);
+          _q.setFromUnitVectors(_up, _b.sub(_a).normalize());
+          _m.compose(_a, _q, _one);
+          b.parent.updateWorldMatrix(true, false);
+          _mi.copy(b.parent.matrixWorld).invert();
+          _m.premultiply(_mi);
+          _m.decompose(b.position, b.quaternion, b.scale);
+          b.scale.set(1, 1, 1);
+          b.updateMatrixWorld(true);   // children read a fresh parent world
+        }
+      }
+    },
+    dispose() {
+      scene.remove(group);
+      skinned.geometry.dispose();
+      (Array.isArray(skinned.material) ? skinned.material : [skinned.material]).forEach((m) => m.dispose());
+    },
+  };
+}
+
 // A fake open-palm joint rig for desktop testing: same shape as
 // hand.joints, static pose, placed by a base matrix.
 export function makeFakeJoints(base) {
