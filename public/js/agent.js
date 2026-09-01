@@ -182,10 +182,21 @@ export function initAgent(ctx) {
   };
 
   let ws = null;
+  let everOpened = false;
+  let fails = 0;
   const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
     + (HOSTED ? '/comfyvr/local/agent' : '/local/agent');
+  // hosted mode 404s until ComfyUI restarts, so retrying matters there;
+  // static hosting (the public demo) has no bridge at all, and forever
+  // retries would paint a red console error every 5s for every visitor
+  function retry() {
+    fails++;
+    if (!everOpened && fails >= 5) return;   // never connected: give up quietly
+    setTimeout(connect, 5000);
+  }
   function connect() {
-    try { ws = new WebSocket(wsUrl); } catch (e) { setTimeout(connect, 5000); return; }
+    try { ws = new WebSocket(wsUrl); } catch (e) { retry(); return; }
+    ws.onopen = () => { everOpened = true; fails = 0; };
     ws.onmessage = async (ev) => {
       let d;
       try { d = JSON.parse(ev.data); } catch (e) { return; }
@@ -199,7 +210,7 @@ export function initAgent(ctx) {
       }
       try { ws.send(JSON.stringify(res)); } catch (e) { /* link died mid-answer */ }
     };
-    ws.onclose = () => setTimeout(connect, 5000);   // hosted mode 404s until ComfyUI restarts; stay quiet
+    ws.onclose = () => retry();
     ws.onerror = () => {};
   }
   connect();
