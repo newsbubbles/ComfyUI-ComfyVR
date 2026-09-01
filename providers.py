@@ -168,6 +168,11 @@ def api_key(name):
         return ""
 
 
+def _shq(s):
+    """Single-quote s for bash (urls and registry ids ride into the script)."""
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
 def bootstrap_script(rig):
     """Install ComfyUI via comfy-cli and serve it on 8188 with CORS open.
 
@@ -184,6 +189,8 @@ def bootstrap_script(rig):
     the port; the readiness probe only trusts /system_stats, which the
     log server 404s, so warming can never read as serving.
     """
+    q = _shq
+    comfy = "comfy --skip-prompt --workspace=/workspace/ComfyUI"
     lines = [
         "set -x",
         "mkdir -p /workspace",
@@ -192,12 +199,29 @@ def bootstrap_script(rig):
         "export DEBIAN_FRONTEND=noninteractive",
         "apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates || true",
         "pip install --no-cache-dir comfy-cli",
-        "comfy --skip-prompt --workspace=/workspace/ComfyUI install --nvidia --fast-deps --skip-torch-or-directml",
-        "pkill -f 'http.server 8188' || true",
-        "comfy --skip-prompt --workspace=/workspace/ComfyUI launch -- --listen 0.0.0.0 --port 8188 --enable-cors-header '*'",
+        # idempotent on a warm volume: install skips when ComfyUI exists
+        f"[ -d /workspace/ComfyUI/.venv ] || {comfy} install --nvidia --fast-deps --skip-torch-or-directml",
     ]
+    # The workflow IS the manifest (notes/run-on.md): packs by registry id
+    # via comfy-cli (never our own resolver), models by embedded url into
+    # their declared folder. Both idempotent, so warm rigs skip the work.
+    man = rig.get("manifest") or {}
+    for p in man.get("packs") or []:
+        pid = (p.get("id") or "").strip()
+        if pid:
+            lines.append(f"{comfy} node install {q(pid)} || echo PACK-FAILED {q(pid)}")
+    for m in man.get("models") or []:
+        url, d = (m.get("url") or "").strip(), (m.get("directory") or "checkpoints").strip("/")
+        if not d.startswith("models"):
+            d = "models/" + d
+        if url:
+            lines.append(f"{comfy} model download --url {q(url)} --relative-path {q(d)} || echo MODEL-FAILED {q(url)}")
     for extra in rig.get("bootExtra") or []:
-        lines.insert(-1, extra)
+        lines.append(extra)
+    lines += [
+        "pkill -f 'http.server 8188' || true",
+        f"{comfy} launch -- --listen 0.0.0.0 --port 8188 --enable-cors-header '*'",
+    ]
     return "\n".join(lines) + "\n"
 
 

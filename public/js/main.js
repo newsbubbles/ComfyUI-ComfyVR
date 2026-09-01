@@ -2455,8 +2455,15 @@ window.CVR = {
     const m = workflowManifest(h.rawWorkflow());
     return { ...m, ...(await manifestSizes(m)) };
   },
-  startRig: (rigId) => startRig(rigId, (st) => flashHint(`warming ${rigId}: ${st.status || '...'}`))
-    .then((d) => { flashHint(`${d.name} is live`); return d; }),
+  // optional hubName: the pod installs that workflow's packs and models
+  // (the workflow IS the manifest) so the rig comes up ready to run it
+  startRig: (rigId, hubName) => {
+    const h = hubName ? hubs.find((x) => x.name.toLowerCase().includes(String(hubName).toLowerCase())) : null;
+    if (hubName && !h) throw new Error('no hub ' + hubName);
+    const extra = h ? { manifest: workflowManifest(h.rawWorkflow()) } : undefined;
+    return startRig(rigId, (st) => flashHint(`warming ${rigId}: ${st.status || '...'}`), extra)
+      .then((d) => { flashHint(`${d.name} is live`); return d; });
+  },
   runOn: (hubName, destId) => {
     const h = hubs.find(x => x.name.toLowerCase().includes(String(hubName).toLowerCase()));
     if (!h) throw new Error('no hub ' + hubName);

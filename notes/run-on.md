@@ -309,11 +309,20 @@ data feed for cold-start theater in the space.
     models are NOT auto-downloaded, need `comfy model download
     --url --relative-path`. Bootstrap uses --skip-torch-or-directml
     on a torch image.
-  - Workflow file transfer to the pod, two candidate paths, decide
-    at first light: (a) b64 the workflow json into env, install-deps
-    at boot; (b) after ComfyUI is up, drive ComfyUI-Manager's HTTP
-    API from our python (no ssh needed ever). Models via `comfy
-    model download` from the manifest urls either way.
+  - Workflow file transfer to the pod: RESOLVED without transferring
+    the file at all. The manifest (packs + models) is enough:
+    `comfy node install <cnr_id>` per pack and `comfy model download
+    --url --relative-path models/<dir>` per model, generated into
+    the bootstrap with bash-safe quoting and PACK-FAILED /
+    MODEL-FAILED markers greppable in boot.log. CODED + generation
+    asserted offline 2026-09-01 (folder prefixing, apostrophe urls,
+    empty entries skipped, launch ordered last; install guarded by
+    [ -d .venv ] so warm volumes skip it). CVR.startRig(rigId,
+    hubName) sends the hub's own manifest. LIVE BURN PENDING and
+    should happen on a NETWORK VOLUME rig, because every cold test
+    without one re-downloads the venv (~3GB) plus the models;
+    creating a volume is a billed standing resource, so that is the
+    user's call, not an autonomous one.
 - R2 scaffolding notes: providers.py
   (python owns key custody: env or gitignored providers.local.json;
   the page NEVER sees a key, and could not call provider APIs anyway

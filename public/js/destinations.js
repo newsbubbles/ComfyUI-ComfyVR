@@ -127,7 +127,9 @@ export const PROVIDERS = { runpod: cloudAdapter('runpod'), vast: cloudAdapter('v
 
 // Warm a rig into a live destination: start the pod, then poll until the
 // backend serves. onPhase gets every status tick for cold-start theater.
-export async function startRig(rigId, onPhase) {
+// extra.manifest ({packs, models} from the workflow itself) rides into
+// the bootstrap so the pod installs what the workflow needs.
+export async function startRig(rigId, onPhase, extra) {
   const rig = RIGS.find((r) => r.id === rigId);
   if (!rig) throw new Error('no rig ' + rigId);
   const P = PROVIDERS[rig.provider];
@@ -136,6 +138,7 @@ export async function startRig(rigId, onPhase) {
   // cap, rig override first, workspace settings as the default
   const { podId } = await P.start({
     ...rig,
+    ...extra,
     cooldownMin: rig.cooldownMin ?? getSetting('runCooldownMin'),
     capUsd: rig.capUsd ?? getSetting('runCapUsd'),
   });
