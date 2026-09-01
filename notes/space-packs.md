@@ -68,12 +68,29 @@ FIXED (the XRHand joints), so a generated hand mesh only needs SKIN
 WEIGHTS around a template armature: fit the canonical skeleton to
 the mesh (scale to bounds, canonical generation pose in the prompt)
 and let Blender's automatic weights do the rest. The bone-map node
-dissolves; the rig-fit script replaces it. Remaining bricks:
-(2) blender headless rig-fit script, testable on any hand mesh;
-(3) make-hands workflow (t2i then Hunyuan3D image-to-mesh; nodes in
-core, model files to D: like TripoSplat); (4) cvr_hands_*.glb
-output convention, placard offers WEAR, skinned-glb driver joins
-wearables.js beside the rigid one.
+dissolves; the rig-fit script replaces it.
+
+RUNG TWO SHIPPED (2026-09-01): tools/rigfit_hands.py, headless
+blender (5.1 verified). Builds the template armature from THE SAME
+joint table as makeFakeJoints (24 bones named by their distal WebXR
+joint, wrist at origin, fingers -Z after glTF export), fits it to a
+mesh (v1 uniform: scale from wrist-to-middle-tip length, wrist at
+the -length end), binds with automatic weights, exports glb.
+Self-test builds a blocky articulated hand and passes: 24 bones, 24
+groups, all 24 own vertices, exported glb verified structurally (24
+skin joints with exact WebXR names, 5 tips, one skinned mesh).
+Learned: a sparse mesh starves automatic weights (48 verts left 9
+bones empty; subdivided passes), so generated meshes should keep a
+few thousand verts at bind time. Usage:
+  blender --background --python tools/rigfit_hands.py -- \
+    --input hand.(obj|glb|fbx) --output cvr_hands_x.glb
+Remaining bricks: (3) make-hands workflow (t2i then Hunyuan3D
+image-to-mesh; nodes in core, model files to D: like TripoSplat);
+(4) cvr_hands_*.glb output convention, placard offers WEAR,
+skinned-glb driver joins wearables.js beside the rigid one. The
+driver's fiddly part will be bone-axis convention (blender +Y along
+bone vs XR joint frames); drive it like makeDebugHands does, from
+joint PAIR world positions, not joint orientations.
 
 Chaining note: steps 1-3 chain through images and meshes that today
 must round-trip through the output folder. Two bridging affordances
