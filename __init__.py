@@ -187,6 +187,90 @@ try:
         )
         return web.json_response(out, status=status)
 
+    # Destination relay: the https headset page cannot fetch plain-http
+    # destinations (LAN peers, vast pods) because of mixed content. The
+    # page registers the destination once, then talks to
+    # /comfyvr/local/relay/{id}/... on this origin and we forward
+    # server-side, http and websocket both. Forwards only to registered
+    # urls, never to arbitrary ones from the request line.
+    _RELAYS = {}
+
+    @routes.post("/comfyvr/local/relay/register")
+    async def cvr_relay_register(request):
+        body = await request.json()
+        rid = str(body.get("id", "")).strip()
+        url = str(body.get("url", "")).rstrip("/")
+        if not rid or not url.startswith(("http://", "https://")):
+            raise web.HTTPBadRequest(text="need id and an http(s) url")
+        _RELAYS[rid] = url
+        return web.json_response({"ok": True, "id": rid})
+
+    @routes.get("/comfyvr/local/relay/{rid}/ws")
+    async def cvr_relay_ws(request):
+        import aiohttp
+        import asyncio as _aio
+        base = _RELAYS.get(request.match_info["rid"])
+        if base is None:
+            raise web.HTTPNotFound(text="unknown relay (register first)")
+        ws_client = web.WebSocketResponse(max_msg_size=64 * 1024 * 1024)
+        await ws_client.prepare(request)
+        backend = base.replace("http", "ws", 1) + "/ws"
+        if request.query_string:
+            backend += "?" + request.query_string
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(backend, max_msg_size=64 * 1024 * 1024) as ws_backend:
+
+                    async def pump(src, dst):
+                        async for msg in src:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                await dst.send_str(msg.data)
+                            elif msg.type == aiohttp.WSMsgType.BINARY:
+                                await dst.send_bytes(msg.data)
+                            else:
+                                break
+                        if not dst.closed:
+                            await dst.close()
+
+                    await _aio.gather(pump(ws_client, ws_backend), pump(ws_backend, ws_client))
+        except (aiohttp.ClientError, _aio.TimeoutError):
+            if not ws_client.closed:
+                await ws_client.close(code=1011, message=b"destination unreachable")
+        return ws_client
+
+    @routes.route("*", "/comfyvr/local/relay/{rid}/api/{path:.*}")
+    async def cvr_relay_http(request):
+        import aiohttp
+        import asyncio as _aio
+        from yarl import URL as _URL
+        rid = request.match_info["rid"]
+        base = _RELAYS.get(rid)
+        if base is None:
+            return web.json_response({"error": "unknown relay (register first)"}, status=404)
+        raw_path = request.rel_url.raw_path[len(f"/comfyvr/local/relay/{rid}/api"):]
+        qs = request.rel_url.raw_query_string
+        url = _URL(base + raw_path + (f"?{qs}" if qs else ""), encoded=True)
+        data = await request.read() if request.can_read_body else None
+        headers = {
+            k: v
+            for k, v in request.headers.items()
+            if k.lower() not in ("host", "origin", "referer", "content-length")
+        }
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.request(
+                    request.method, url, data=data, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as r:
+                    body = await r.read()
+                    resp_headers = {}
+                    ct = r.headers.get("Content-Type")
+                    if ct:
+                        resp_headers["Content-Type"] = ct
+                    return web.Response(status=r.status, body=body, headers=resp_headers)
+        except (aiohttp.ClientError, _aio.TimeoutError) as e:
+            return web.json_response({"error": "destination unreachable", "detail": str(e)}, status=502)
+
     # Voice: forward text to the local sidecar's speech endpoint.
     @routes.post("/comfyvr/local/tts")
     async def cvr_tts(request):

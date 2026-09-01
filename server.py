@@ -162,6 +162,85 @@ def app_factory(backend: str) -> web.Application:
                 status=502,
             )
 
+    # ---- destination relay ------------------------------------------------
+    # The https headset page cannot fetch plain-http destinations (LAN
+    # peers, vast pods): mixed content. The page registers the destination
+    # once, then talks to /local/relay/{id}/... on THIS origin and we
+    # forward server-side, http and websocket both. Registration is
+    # LAN-open like everything else here; the relay only forwards to
+    # registered urls, never to arbitrary ones from the request line.
+    app["relays"] = {}
+
+    async def relay_register(request):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise web.HTTPBadRequest(text="body must be JSON")
+        rid = str(body.get("id", "")).strip()
+        url = str(body.get("url", "")).rstrip("/")
+        if not rid or not url.startswith(("http://", "https://")):
+            raise web.HTTPBadRequest(text="need id and an http(s) url")
+        request.app["relays"][rid] = url
+        return web.json_response({"ok": True, "id": rid})
+
+    async def relay_http(request):
+        rid = request.match_info["rid"]
+        base = request.app["relays"].get(rid)
+        if not base:
+            return web.json_response({"error": "unknown relay (register first)"}, status=404)
+        # raw path keeps %2F-encoded segments intact (same as the /api proxy)
+        raw_path = request.rel_url.raw_path[len(f"/local/relay/{rid}/api"):]
+        qs = request.rel_url.raw_query_string
+        url = URL(base + raw_path + (f"?{qs}" if qs else ""), encoded=True)
+        data = await request.read() if request.can_read_body else None
+        headers = {
+            k: v
+            for k, v in request.headers.items()
+            if k.lower() not in ("host", "origin", "referer", "content-length")
+        }
+        try:
+            async with request.app["http"].request(
+                request.method, url, data=data, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as r:
+                body = await r.read()
+                resp_headers = {}
+                ct = r.headers.get("Content-Type")
+                if ct:
+                    resp_headers["Content-Type"] = ct
+                return web.Response(status=r.status, body=body, headers=resp_headers)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return web.json_response({"error": "destination unreachable", "detail": str(e)}, status=502)
+
+    async def relay_ws(request):
+        base = request.app["relays"].get(request.match_info["rid"])
+        if not base:
+            raise web.HTTPNotFound(text="unknown relay (register first)")
+        ws_client = web.WebSocketResponse(max_msg_size=64 * 1024 * 1024)
+        await ws_client.prepare(request)
+        backend = base.replace("http", "ws", 1) + "/ws"
+        if request.query_string:
+            backend += "?" + request.query_string
+        try:
+            async with request.app["http"].ws_connect(backend, max_msg_size=64 * 1024 * 1024) as ws_backend:
+
+                async def pump(src, dst):
+                    async for msg in src:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await dst.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await dst.send_bytes(msg.data)
+                        else:
+                            break
+                    if not dst.closed:
+                        await dst.close()
+
+                await asyncio.gather(pump(ws_client, ws_backend), pump(ws_backend, ws_client))
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            if not ws_client.closed:
+                await ws_client.close(code=1011, message=b"destination unreachable")
+        return ws_client
+
     async def provider_call(request):
         """Cloud provider actions (pricing/start/status/stop/terminate).
 
@@ -304,6 +383,9 @@ def app_factory(backend: str) -> web.Application:
     app.router.add_post("/local/stt", stt_proxy)
     app.router.add_post("/local/tts", tts_proxy)
     app.router.add_post("/local/provider/{name}/{action}", provider_call)
+    app.router.add_post("/local/relay/register", relay_register)
+    app.router.add_get("/local/relay/{rid}/ws", relay_ws)
+    app.router.add_route("*", "/local/relay/{rid}/api/{path:.*}", relay_http)
     app.router.add_get("/local/agent", agent_ws)
     app.router.add_post("/local/agent/call", agent_call)
     app.router.add_get("/ws", ws_proxy)

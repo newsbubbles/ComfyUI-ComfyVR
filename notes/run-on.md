@@ -215,8 +215,17 @@ what they would pay anyway; the ref code is in the link we open.
   - Vast ingress is raw http ip:port, NO https option for arbitrary
     ports (Instance Portal cloudflare tunnels need their template
     stack). Mixed content: the https headset page cannot fetch it
-    directly. Future: relay route through our python (server-side
-    http is fine). Vast works from the http pages today.
+    directly, and the same holds for plain-http LAN PEERS, so this
+    was a hole in the flagship headset scenario, not just a vast
+    quirk. SOLVED 2026-09-01: relay routes in both deployments
+    (/local/relay/register once, then /local/relay/{id}/api/* and
+    /local/relay/{id}/ws forward server-side; forwards ONLY to
+    registered urls, never arbitrary ones). clientFor() switches to
+    the relay automatically when the page is https and the
+    destination is http://. Verified live: a ComfyClient pointed at
+    the relay base detected 'live' and held an open websocket
+    through /local/relay/t/ws against a real backend. Hosted twin
+    needs a ComfyUI restart to exist, as all __init__.py routes do.
   - Vast STOP can lose the GPU to another renter and restart hangs
     in scheduling; terminate is the safe end state. Stopped RunPod
     pods bill volume disk at $0.20/GB/mo; network volumes $0.07.

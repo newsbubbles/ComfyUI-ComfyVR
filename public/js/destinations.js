@@ -30,6 +30,20 @@ export function removeDestination(id) {
   save();
 }
 
+// An https page cannot fetch a plain-http destination (mixed content):
+// the headset path is https, LAN peers and vast pods are http. Register
+// the destination with our python side once and ride this origin's
+// /relay routes instead; http and the websocket both forward server-side.
+async function relayBase(d) {
+  const r = await fetch(LOCAL + '/relay/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: d.id, url: d.url }),
+  });
+  if (!r.ok) throw new Error('relay registration failed (HTTP ' + r.status + ')');
+  return location.origin + LOCAL + '/relay/' + d.id;
+}
+
 // The client for a destination, connected lazily. null/undefined = the
 // primary client the caller already holds (returned as-is for symmetry).
 export async function clientFor(dest, primary) {
@@ -38,7 +52,8 @@ export async function clientFor(dest, primary) {
   if (!d) throw new Error('no destination ' + dest);
   let c = clients.get(d.id);
   if (!c) {
-    c = new ComfyClient({ base: d.url });
+    const mixed = location.protocol === 'https:' && d.url.startsWith('http://');
+    c = new ComfyClient({ base: mixed ? await relayBase(d) : d.url });
     clients.set(d.id, c);
     await c.detect();
   }
