@@ -13,6 +13,7 @@ import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
 import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest } from './destinations.js';
+import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
 const errBox = $('err');
@@ -2359,6 +2360,12 @@ window.CVR = {
   wearHands, unwearHands,
   addPeer, listDestinations, removeDestination,
   listRigs, saveRig, removeRig, stopDest,
+  manifest: async (hubName) => {
+    const h = hubs.find((x) => x.name.toLowerCase().includes(String(hubName).toLowerCase()));
+    if (!h) throw new Error('no hub ' + hubName);
+    const m = workflowManifest(h.rawWorkflow());
+    return { ...m, ...(await manifestSizes(m)) };
+  },
   startRig: (rigId) => startRig(rigId, (st) => flashHint(`warming ${rigId}: ${st.status || '...'}`))
     .then((d) => { flashHint(`${d.name} is live`); return d; }),
   runOn: (hubName, destId) => {

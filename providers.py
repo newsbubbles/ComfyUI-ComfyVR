@@ -7,7 +7,7 @@ and a key in page storage would leak with any export of the space.
 
 The whole surface is five actions, dispatched from one route
 (/local/provider/{name}/{action} standalone, /comfyvr/local/provider/...
-hosted). Keeping it this small is what makes a provider one file:
+hosted). Keeping it this small is what makes a provider one function:
 
   pricing            -> {gpus: [{id, name, vram_gb, usd_hr}]}
   start  {rig}       -> {podId, status}
@@ -15,10 +15,25 @@ hosted). Keeping it this small is what makes a provider one file:
   stop   {podId}     -> {status}                gpu billing stops
   terminate {podId}  -> {status}                everything gone
 
+API facts verified 2026-09-01 against docs.runpod.io / docs.vast.ai:
+- RunPod REST v1 retires 2026-11-15 and GraphQL early 2027; this
+  adapter targets v2 (api.runpod.io/v2). v2 create has NO
+  dockerStartCmd, only `args` passed to the container entrypoint, so
+  the bootstrap script rides base64 in an env var and args unpacks it.
+- RunPod http ingress: https://{podId}-8188.proxy.runpod.net (100s
+  request cap; ws and polling are fine, long POSTs are not).
+- Vast: two-step rent (search /bundles/, PUT /asks/{offer_id}/), the
+  instance id comes back as new_contract. Ingress is raw ip:port with
+  NO https, so a page served over https cannot reach it directly
+  (mixed content); the relay route is future work, Vast works from
+  http pages today. Vast stop can lose the GPU to another renter
+  (restart hangs in scheduling); terminate is the safe end state.
+
 Note: on a --listen/--tls server anyone on the LAN can hit these, same
 as they can queue prompts. The key never leaves this process; the risk
 is a housemate starting a pod, not a stranger reading your key.
 """
+import base64
 import json
 import os
 
@@ -26,6 +41,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 KEYFILE = os.path.join(ROOT, "providers.local.json")
 
 ENV_KEYS = {"runpod": "RUNPOD_API_KEY", "vast": "VAST_API_KEY"}
+
+RUNPOD = "https://api.runpod.io/v2"
+VAST = "https://console.vast.ai/api/v0"
+
+# Torch preinstalled, empty entrypoint (args become the command verbatim),
+# predictable layout. RunPod's own pytorch images run /start.sh, which
+# would swallow our args.
+DEFAULT_IMAGE = "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime"
 
 
 def api_key(name):
@@ -39,12 +62,190 @@ def api_key(name):
         return ""
 
 
+def bootstrap_script(rig):
+    """Install ComfyUI via comfy-cli and serve it on 8188 with CORS open.
+
+    Resolution is DELEGATED to comfy-cli (writing a resolver is
+    reinventing a commodity, notes/run-on.md). First light installs the
+    core app only; workflow deps (install-deps) and model downloads join
+    once the workflow file transfer lands. Model files persist on the
+    network volume at /workspace between runs of the same rig.
+    """
+    lines = [
+        "set -ex",
+        "export DEBIAN_FRONTEND=noninteractive",
+        "apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates || true",
+        "pip install --no-cache-dir comfy-cli",
+        "comfy --skip-prompt --workspace=/workspace/ComfyUI install --nvidia --fast-deps --skip-torch-or-directml",
+        "comfy --skip-prompt --workspace=/workspace/ComfyUI launch -- --listen 0.0.0.0 --port 8188 --enable-cors-header '*'",
+    ]
+    for extra in rig.get("bootExtra") or []:
+        lines.insert(-1, extra)
+    return "\n".join(lines) + "\n"
+
+
+def _boot_b64(rig):
+    return base64.b64encode(bootstrap_script(rig).encode()).decode()
+
+
+async def _jget(http, url, key, method="GET", body=None, bearer=True):
+    headers = {"Authorization": ("Bearer " + key) if bearer else key}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    async with http.request(method, url, headers=headers, json=body) as r:
+        text = await r.text()
+        try:
+            data = json.loads(text) if text else {}
+        except ValueError:
+            data = {"raw": text[:400]}
+        if r.status >= 400:
+            raise RuntimeError(f"HTTP {r.status} from {url}: {json.dumps(data)[:400]}")
+        return data
+
+
+async def _serves(http, url):
+    """True once a ComfyUI actually answers at url."""
+    import aiohttp
+    try:
+        async with http.get(url + "/system_stats", timeout=aiohttp.ClientTimeout(total=6)) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------- runpod --
 async def _runpod(action, body, http, key):
-    raise NotImplementedError("runpod adapter lands with the verified API shapes")
+    if action == "pricing":
+        d = await _jget(http, RUNPOD + "/catalog/gpus", key)
+        gpus = []
+        for g in d.get("gpus", d if isinstance(d, list) else []):
+            price = g.get("price") or {}
+            gpus.append({
+                "id": g.get("id"),
+                "name": g.get("name") or g.get("id"),
+                "vram_gb": g.get("memory"),
+                "usd_hr": price.get("secure"),
+                "usd_hr_community": price.get("community"),
+            })
+        return {"gpus": gpus}
+
+    if action == "start":
+        rig = body.get("rig") or {}
+        req = {
+            "name": "comfyvr-" + (rig.get("id") or rig.get("name") or "rig"),
+            "image": rig.get("image") or DEFAULT_IMAGE,
+            "gpu": {"id": rig.get("gpuType") or "NVIDIA GeForce RTX 4090", "count": 1},
+            "disk": int(rig.get("disk") or 50),
+            "ports": ["8188/http"],
+            "cloud": rig.get("cloud") or "SECURE",
+            "env": {"CVR_BOOT": _boot_b64(rig)},
+            # v2 has no dockerStartCmd; entrypoint of DEFAULT_IMAGE is
+            # empty so args become the command. How v2 splits this
+            # string is the first thing to confirm at live first light.
+            "args": "bash -c 'echo $CVR_BOOT | base64 -d | bash'",
+        }
+        if rig.get("volumeId"):
+            req["mounts"] = {"network": [{"volumeId": rig["volumeId"], "path": "/workspace"}]}
+        if rig.get("dataCenter"):
+            req["dataCenterIds"] = [rig["dataCenter"]]
+        d = await _jget(http, RUNPOD + "/pods", key, "POST", req)
+        return {"podId": d.get("id"), "status": (d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("cost")}
+
+    pod_id = body.get("podId")
+    if not pod_id:
+        raise RuntimeError("podId required")
+
+    if action == "status":
+        d = await _jget(http, RUNPOD + f"/pods/{pod_id}", key)
+        st = (d.get("status") or "").lower()
+        url = f"https://{pod_id}-8188.proxy.runpod.net"
+        serving = st == "running" and await _serves(http, url)
+        return {"status": "serving" if serving else st, "url": url if serving else None, "usd_hr": d.get("cost")}
+
+    if action == "stop":
+        await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "stop"})
+        return {"status": "stopped"}
+
+    if action == "terminate":
+        await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "terminate"})
+        return {"status": "terminated"}
 
 
+# ------------------------------------------------------------------ vast --
 async def _vast(action, body, http, key):
-    raise NotImplementedError("vast adapter lands with the verified API shapes")
+    if action == "pricing":
+        q = {
+            "verified": {"eq": True}, "rentable": {"eq": True},
+            "num_gpus": {"eq": 1}, "direct_port_count": {"gte": 1},
+            "order": [["dph_total", "asc"]], "type": "on-demand", "limit": 64,
+        }
+        d = await _jget(http, VAST + "/bundles/", key, "POST", q)
+        best = {}
+        for o in d.get("offers", []):
+            name = o.get("gpu_name")
+            if name and (name not in best or o["dph_total"] < best[name]["usd_hr"]):
+                best[name] = {
+                    "id": name,
+                    "name": name,
+                    "vram_gb": round((o.get("gpu_ram") or 0) / 1024),
+                    "usd_hr": o.get("dph_total"),
+                }
+        return {"gpus": sorted(best.values(), key=lambda g: g["usd_hr"] or 9e9)}
+
+    if action == "start":
+        rig = body.get("rig") or {}
+        want = rig.get("gpuType") or "RTX 4090"
+        q = {
+            "verified": {"eq": True}, "rentable": {"eq": True},
+            "num_gpus": {"eq": 1}, "direct_port_count": {"gte": 1},
+            "gpu_name": {"in": [want, want.replace(" ", "_")]},
+            "order": [["dph_total", "asc"]], "type": "on-demand", "limit": 3,
+        }
+        d = await _jget(http, VAST + "/bundles/", key, "POST", q)
+        offers = d.get("offers") or []
+        if not offers:
+            raise RuntimeError(f"no rentable {want} offers right now")
+        offer = offers[0]
+        req = {
+            "image": rig.get("image") or DEFAULT_IMAGE,
+            "disk": int(rig.get("disk") or 50),
+            "env": {"-p 8188:8188": "1"},
+            "onstart": "echo " + _boot_b64(rig) + " | base64 -d | bash",
+            "runtype": "ssh",
+            "label": "comfyvr-" + (rig.get("id") or "rig"),
+        }
+        d = await _jget(http, VAST + f"/asks/{offer['id']}/", key, "PUT", req)
+        if not d.get("success", True):
+            raise RuntimeError("vast refused the ask: " + json.dumps(d)[:300])
+        return {"podId": str(d.get("new_contract")), "status": "provisioning", "usd_hr": offer.get("dph_total")}
+
+    pod_id = body.get("podId")
+    if not pod_id:
+        raise RuntimeError("podId required")
+
+    if action == "status":
+        d = await _jget(http, VAST + f"/instances/{pod_id}/", key)
+        inst = d.get("instances") or d   # single-instance responses wrap inconsistently
+        st = (inst.get("actual_status") or "provisioning").lower()
+        url = None
+        ports = inst.get("ports") or {}
+        mapped = (ports.get("8188/tcp") or [{}])[0].get("HostPort")
+        ip = inst.get("public_ipaddr")
+        if st == "running" and ip and mapped:
+            candidate = f"http://{ip}:{mapped}"
+            if await _serves(http, candidate):
+                url = candidate
+        return {"status": "serving" if url else st, "url": url, "usd_hr": inst.get("dph_total")}
+
+    if action == "stop":
+        # a stopped vast instance can lose its GPU to another renter and
+        # hang in scheduling on restart; terminate is the safe end state
+        await _jget(http, VAST + f"/instances/{pod_id}/", key, "PUT", {"state": "stopped"})
+        return {"status": "stopped", "note": "vast may reassign the gpu; restart can hang, terminate is safer"}
+
+    if action == "terminate":
+        await _jget(http, VAST + f"/instances/{pod_id}/", key, "DELETE")
+        return {"status": "terminated"}
 
 
 PROVIDERS = {"runpod": _runpod, "vast": _vast}
@@ -73,7 +274,7 @@ async def handle(name, action, body, http=None):
             async with aiohttp.ClientSession() as s:
                 return 200, await fn(action, body, s, key)
         return 200, await fn(action, body, http, key)
-    except NotImplementedError as e:
-        return 501, {"error": str(e)}
+    except RuntimeError as e:
+        return 502, {"error": str(e)}
     except Exception as e:
         return 502, {"error": f"{name} {action} failed", "detail": str(e)}

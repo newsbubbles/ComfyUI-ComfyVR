@@ -184,11 +184,54 @@ what they would pay anyway; the ref code is in the link we open.
   local -> each destination; the label is the egress label. Gotcha
   found by test: fresh hubs have dest undefined, and indexOf(undefined)
   is -1, so the first cycle skipped the first destination; ?? null.
-- R1: manifest extractor: workflow json -> {packs+vers, models+urls,
-  VRAM estimate} for display and GPU sizing ONLY; resolution is
-  DELEGATED to comfy-cli on the pod (see adversarial pass).
-- R2: RunPod + Vast provisioners; docker base + network volume; cold
-  and warm start timed. Scaffolding shipped with R0.5: providers.py
+- R1 DONE (2026-09-01): manifest.js reads packs (cnr_id/ver, subgraph
+  definitions included) + models (properties.models) straight from the
+  workflow json; manifestSizes HEADs the model urls for bytes (HF
+  answers CORS on resolve urls). make-vr-asset: 5 models, 3.78 GB,
+  zero unknowns, zero packs (TripoSplat nodes are core since v0.34).
+  CVR.manifest('name') is the card. Display and GPU sizing ONLY;
+  resolution is DELEGATED to comfy-cli on the pod (adversarial pass).
+- R2 WRITTEN, awaiting first light with real keys: providers.py now
+  carries full runpod + vast adapters against the VERIFIED 2026 APIs.
+  Load-bearing facts from the research pass:
+  - RunPod REST v1 RETIRES 2026-11-15, GraphQL early 2027; adapter
+    targets v2 (api.runpod.io/v2, Bearer auth). GPU catalog:
+    GET /catalog/gpus (id string is what create wants). Create:
+    POST /pods {image, gpu:{id,count}, disk, ports:["8188/http"],
+    env, cloud, mounts.network, dataCenterIds}. Lifecycle:
+    POST /pods/{id}/action {action: stop|terminate}. Ingress:
+    https://{podId}-8188.proxy.runpod.net, auto-https, 100s request
+    cap (ws + polling fine, long POSTs die).
+  - v2 create has NO dockerStartCmd (v1 had it), only `args` to the
+    container entrypoint. So: default image pytorch/pytorch (EMPTY
+    entrypoint; runpod/pytorch's /start.sh would swallow args),
+    bootstrap script base64 in env CVR_BOOT, args unpacks it. HOW v2
+    splits the args string = first thing to confirm at first light.
+  - Vast: two-step rent. POST /bundles/ search (operator objects,
+    order dph_total asc) then PUT /asks/{offer_id}/ {image, disk,
+    env {"-p 8188:8188":"1"}, onstart, runtype}; instance id is
+    new_contract in the response. Status GET /instances/{id}/,
+    actual_status, ports["8188/tcp"][0].HostPort on public_ipaddr.
+  - Vast ingress is raw http ip:port, NO https option for arbitrary
+    ports (Instance Portal cloudflare tunnels need their template
+    stack). Mixed content: the https headset page cannot fetch it
+    directly. Future: relay route through our python (server-side
+    http is fine). Vast works from the http pages today.
+  - Vast STOP can lose the GPU to another renter and restart hangs
+    in scheduling; terminate is the safe end state. Stopped RunPod
+    pods bill volume disk at $0.20/GB/mo; network volumes $0.07.
+  - comfy-cli confirmed: global flags BEFORE subcommand, so
+    `comfy --skip-prompt --workspace=... install --nvidia`; deps via
+    `comfy node install-deps --workflow=<file>` (node packs only);
+    models are NOT auto-downloaded, need `comfy model download
+    --url --relative-path`. Bootstrap uses --skip-torch-or-directml
+    on a torch image.
+  - Workflow file transfer to the pod, two candidate paths, decide
+    at first light: (a) b64 the workflow json into env, install-deps
+    at boot; (b) after ComfyUI is up, drive ComfyUI-Manager's HTTP
+    API from our python (no ssh needed ever). Models via `comfy
+    model download` from the manifest urls either way.
+- R2 scaffolding notes: providers.py
   (python owns key custody: env or gitignored providers.local.json;
   the page NEVER sees a key, and could not call provider APIs anyway
   because of CORS), one route /local/provider/{name}/{action} in both
