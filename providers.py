@@ -66,13 +66,17 @@ def _save_state():
 
 # ---- spend watchdog ------------------------------------------------------
 # The user's rule: 100% deterministic cooldown. Every pod started through
-# here is tracked and STOPPED after cooldown_min with no activity, where
-# activity = client touches (status calls) OR a non-empty queue on the pod
-# itself (a long render with the browser closed is not idle). A spend cap
-# (cap_usd, optional) TERMINATES when est. spend crosses it. Runs in this
-# process and persists to providers.state.json, so it survives browser
-# death and server restarts; the residual risk is this process dying and
-# never coming back, which the wrist cost meter exists to catch.
+# here is tracked and STOPPED after cooldown_min with no ACTIVITY, where
+# activity means a non-empty queue on the pod (a long render with the
+# browser closed is not idle) or an explicit touch(). Status reads do NOT
+# touch: observation kept a pod alive for 37 minutes at first field use,
+# because the panel's own probes reset the clock. A cold start gets a
+# grace window from `started` so a slow install is never stopped mid-boot.
+# A spend cap (cap_usd, optional) TERMINATES when est. spend crosses it.
+# Runs in this process and persists to providers.state.json, so it
+# survives browser death and server restarts; the residual risk is this
+# process dying and never coming back, which the wrist cost meter covers.
+BOOT_GRACE_S = 25 * 60
 WATCH = _load_state()
 _watchdog_started = False
 
@@ -130,7 +134,8 @@ async def _watchdog():
                         w["last_used"] = now
                         _save_state()
                         continue
-                    if now - w.get("last_used", w["started"]) >= w.get("cooldown_s", 1800):
+                    anchor = max(w.get("last_used", 0), w["started"] + BOOT_GRACE_S - w.get("cooldown_s", 1800))
+                    if now - anchor >= w.get("cooldown_s", 1800):
                         await fn("stop", {"podId": pod_id}, http, key)
                         WATCH.pop(pod_id, None)
                         _save_state()
@@ -456,8 +461,6 @@ async def handle(name, action, body, http=None):
             "cap_usd": float(rig.get("capUsd") or 0) or None,
         }
         _save_state()
-    elif action == "status":
-        touch(body.get("podId"))
     elif action in ("stop", "terminate"):
         WATCH.pop(body.get("podId"), None)
         _save_state()
