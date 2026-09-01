@@ -162,3 +162,13 @@ export async function stopDest(destId) {
   if (rig) upsertCloudDest(rig, { url: null });
   return out;
 }
+
+// Terminate it: everything on the pod is gone, all billing ends.
+export async function terminateDest(destId) {
+  const d = DESTS.find((x) => x.id === destId);
+  if (!d || d.kind !== 'cloud') throw new Error('not a cloud destination: ' + destId);
+  const out = await PROVIDERS[d.provider].terminate(d);
+  const rig = RIGS.find((r) => r.id === d.rigId);
+  if (rig) upsertCloudDest(rig, { url: null, podId: null });
+  return out;
+}

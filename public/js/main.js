@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, PROVIDERS, upsertCloudDest } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -935,15 +935,23 @@ function buildRemoteRuns(pos) {
   // forever. Clearing url makes the next pass skip the probe, so the
   // rebuild chain converges.
   for (const d of dests) {
-    if (d.kind !== 'cloud' || !d.url || !d.podId) continue;
-    const goCold = () => {
-      const rig = listRigs().find((r) => r.id === d.rigId);
-      if (rig) upsertCloudDest(rig, { url: null });
-      if (remotePanel) rebuild();
-    };
-    // a status error (terminated pod 404s upstream) means unreachable,
-    // which is COLD as far as a destination is concerned
-    PROVIDERS[d.provider]?.status(d).then((st) => { if (!st.url) goCold(); }).catch(goCold);
+    if (d.kind !== 'cloud' || !d.podId) continue;
+    // probe every podded destination: a pod warmed in a page that has
+    // since closed never learned its url (the startRig poll died with
+    // the page), and a pod stopped elsewhere must not read LIVE. The
+    // panel is the recovery point either way.
+    const rig = () => listRigs().find((r) => r.id === d.rigId);
+    const patch = (p) => { if (rig()) { upsertCloudDest(rig(), p); if (remotePanel) rebuild(); } };
+    PROVIDERS[d.provider]?.status(d).then((st) => {
+      if (st.url && st.url !== d.url) patch({ url: st.url, usdHr: st.usd_hr });
+      else if (st.status === 'terminated') patch({ url: null, podId: null });
+      else if (!st.url && d.url) patch({ url: null });
+    }).catch((e) => {
+      // a definitive not-found means the pod is gone (terminated pods
+      // 404 upstream); a network blip only downgrades to not-serving
+      if (/404|terminated/i.test(String(e.message || ''))) patch({ url: null, podId: null });
+      else if (d.url) patch({ url: null });
+    });
   }
   const rows = [readoutRow(() => `${dests.length} destination${dests.length === 1 ? '' : 's'} · ${rigs.length} rig${rigs.length === 1 ? '' : 's'}`, () => '')];
   for (const d of dests) {
@@ -954,14 +962,16 @@ function buildRemoteRuns(pos) {
         else flashHint(d.url);
       }));
     } else {
-      const live = !!d.url;
+      const st = d.url ? 'SERVING' : d.podId ? 'STARTING' : 'COLD';
       const cost = d.usdHr ? ` · $${d.usdHr}/H` : '';
-      rows.push(buttonRow(`☁ ${d.name.toUpperCase()} · ${live ? 'LIVE' + cost + ' · ■ STOP' : 'COLD'}`, (frac) => {
-        if (live && frac > 0.7) {
+      // stop works the moment a pod EXISTS: a warming pod burns money
+      // too, and waiting for serving to allow stop was a field bug
+      rows.push(buttonRow(`☁ ${d.name.toUpperCase()} · ${st}${d.podId ? cost + ' · ■ STOP' : ''}`, (frac) => {
+        if (d.podId && frac > 0.7) {
           stopDest(d.id)
-            .then(() => { flashHint('stopped ' + d.name); rebuild(); })
+            .then(() => { flashHint('stopped ' + d.name + ' · gpu billing ended'); rebuild(); })
             .catch((e) => flashHint(String(e.message || e)));
-        } else flashHint(d.podId ? 'pod ' + d.podId : 'cold · warm its rig below');
+        } else flashHint(d.podId ? `pod ${d.podId} · ${st.toLowerCase()}` : 'cold · warm its rig below');
       }));
     }
   }
@@ -2545,7 +2555,7 @@ window.CVR = {
   openRemoteRuns, remoteRuns: () => remotePanel,
   wearHands, unwearHands,
   addPeer, listDestinations, removeDestination,
-  listRigs, saveRig, removeRig, stopDest,
+  listRigs, saveRig, removeRig, stopDest, terminateDest,
   manifest: async (hubName) => {
     const h = hubs.find((x) => x.name.toLowerCase().includes(String(hubName).toLowerCase()));
     if (!h) throw new Error('no hub ' + hubName);
