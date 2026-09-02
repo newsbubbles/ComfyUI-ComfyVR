@@ -266,6 +266,47 @@ async def _serves(http, url):
         return False
 
 
+async def _boot_log(http, url, tail=200):
+    """Tail the pod's boot.log while it warms. The bootstrap runs a stdlib
+    http.server on 8188 serving /workspace, so /boot.log is the live cold-
+    start feed through the provider ingress (no ssh). It disappears the
+    moment ComfyUI takes the port: /boot.log then 404s, which reads as
+    serving. Connection refused means the container is still booting."""
+    import aiohttp
+    try:
+        async with http.get(url + "/boot.log", timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status == 200:
+                lines = (await r.text()).splitlines()
+                return {"lines": lines[-tail:], "serving": False,
+                        "phase": _phase_of(lines)}
+            return {"lines": [], "serving": await _serves(http, url), "phase": ""}
+    except Exception:
+        return {"lines": [], "serving": False, "phase": "booting the container"}
+
+
+# The bootstrap is `set -x`, so its trace names each step; turn the tail of
+# the log into a short human phase for the pod panel headline.
+_PHASE_MARKS = [
+    ("comfy launch", "launching ComfyUI"),
+    ("model download", "downloading models"),
+    ("node install", "installing node packs"),
+    ("git clone", "cloning the comfyvr pack"),
+    ("comfy", "installing ComfyUI"),
+    ("blender", "installing blender"),
+    ("apt-get", "installing system packages"),
+    ("http.server", "pod is up, bootstrap starting"),
+]
+
+
+def _phase_of(lines):
+    for ln in reversed(lines[-40:]):
+        low = ln.lower()
+        for mark, phase in _PHASE_MARKS:
+            if mark in low:
+                return phase
+    return "warming"
+
+
 # ---------------------------------------------------------------- runpod --
 async def _runpod(action, body, http, key):
     if action == "pods":
@@ -360,6 +401,9 @@ async def _runpod(action, body, http, key):
         url = f"https://{pod_id}-8188.proxy.runpod.net"
         serving = st == "running" and await _serves(http, url)
         return {"status": "serving" if serving else st, "url": url if serving else None, "usd_hr": d.get("cost")}
+
+    if action == "logs":
+        return await _boot_log(http, f"https://{pod_id}-8188.proxy.runpod.net")
 
     if action == "stop":
         await _jget(http, RUNPOD + f"/pods/{pod_id}/action", key, "POST", {"action": "stop"})
@@ -465,6 +509,15 @@ async def _vast(action, body, http, key):
                 url = candidate
         return {"status": "serving" if url else st, "url": url, "usd_hr": inst.get("dph_total")}
 
+    if action == "logs":
+        d = await _jget(http, VAST + f"/instances/{pod_id}/", key)
+        inst = d.get("instances") or d
+        mapped = ((inst.get("ports") or {}).get("8188/tcp") or [{}])[0].get("HostPort")
+        ip = inst.get("public_ipaddr")
+        if ip and mapped:
+            return await _boot_log(http, f"http://{ip}:{mapped}")
+        return {"lines": [], "serving": False, "phase": "waiting for the instance"}
+
     if action == "stop":
         # a stopped vast instance can lose its GPU to another renter and
         # hang in scheduling on restart; terminate is the safe end state
@@ -494,7 +547,7 @@ async def handle(name, action, body, http=None):
     fn = PROVIDERS.get(name)
     if fn is None:
         return 404, {"error": f"unknown provider '{name}'", "known": sorted(PROVIDERS)}
-    if action not in ("pricing", "pods", "start", "status", "stop", "resume", "terminate"):
+    if action not in ("pricing", "pods", "start", "status", "stop", "resume", "terminate", "logs"):
         return 400, {"error": f"unknown action '{action}'"}
     key = api_key(name)
     if not key:

@@ -3,7 +3,7 @@
 // point so VR controllers can slot in later.
 import * as THREE from 'three';
 import { parseWorkflow, workflowTypes, typesAccepting, typesProducing, colorForType, linkTypeMatches, schemaFromObjectInfo, BUILTIN_SCHEMA } from './graph.js';
-import { Panel, FLOATERS, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
+import { Panel, FLOATERS, pumpRedraws, PW, buttonRow, readoutRow, glyphRow, logRow, progressRow, keysRow, kbufRow, keyIndexAt, sliderValue } from './panels.js';
 import { BeamSystem } from './beams.js';
 import { Hub } from './hubs.js';
 import { ComfyClient, demoImage, scanOutputsForAssets, scanOutputsForMedia, summarizeApi, MESH_EXT } from './comfy.js';
@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, cachedClient, listRigs, saveRig, removeRig, startRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, cachedClient, listRigs, saveRig, removeRig, startRig, kickRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -978,18 +978,17 @@ function buildRunOnPicker(h, checking) {
   for (const d of dests) {
     const state = d.kind === 'peer' ? 'PEER' : destState(d);
     if (state === 'STOPPED') {
-      rows.push(buttonRow(`▸ RESUME ${d.name.toUpperCase()} · STOPPED`, () => {
+      rows.push(buttonRow(`▸ RESUME ${d.name.toUpperCase()} · same disk`, () => {
         closeRunOnPicker();
-        flashHint('resuming ' + d.name + ' (seconds, disk intact)');
-        PROVIDERS[d.provider].resume(d)
-          .then(() => waitServing(d, h))
-          .catch((e) => flashHint(String(e.message || e)));
+        openPodPanel(d, h, 'resuming (disk as you left it)');
+        PROVIDERS[d.provider].resume(d).catch((e) => flashHint(String(e.message || e)));
       }));
       continue;
     }
     rows.push(buttonRow(`${d.kind === 'peer' ? '⬡' : '☁'} ${d.name.toUpperCase()} · ${state}`, () => {
       if (d.kind === 'cloud' && !d.podId) { flashHint('that rig is cold · warm it below'); return; }
       bindDest(h, d.id);
+      if (d.kind === 'cloud' && d.podId) { closeRunOnPicker(); openPodPanel(d, h); }   // watch it / act on it
     }));
   }
   // warm a rig FOR this workflow: its manifest rides into the bootstrap,
@@ -1000,18 +999,22 @@ function buildRunOnPicker(h, checking) {
     const d = dests.find((x) => x.id === 'cloud-' + r.id);
     if (d?.url || (d?.podId && !d?.stopped)) continue;   // live or starting: nothing to warm
     const replacing = !!d?.podId;
+    // warm the rig FOR this workflow: its manifest rides into the bootstrap,
+    // so the pod comes up with this workflow's models and packs. The pod
+    // panel opens immediately so the whole cold start is watchable.
     const doWarm = () => {
       closeRunOnPicker();
-      flashHint(`warming ${r.name} with ${h.name}'s models (cold start takes a while)`);
-      startRig(r.id, (st) => flashHint(`warming ${r.name}: ${st.status || '...'}`), { manifest: workflowManifest(h.rawWorkflow()) })
-        .then((dd) => { bindDest(h, dd.id); flashHint(`${dd.name} is live · ${h.name} bound to it`); })
+      kickRig(r.id, { manifest: workflowManifest(h.rawWorkflow()) })
+        .then((dd) => openPodPanel(dd, h, `building a fresh pod with ${h.name}'s models`))
         .catch((e) => flashHint(String(e.message || e)));
     };
-    rows.push(buttonRow(`▸ WARM ${replacing ? 'FRESH ' : ''}${r.name.toUpperCase()} FOR ${h.name.toUpperCase()}`, () => {
+    // REBUILD (was "warm fresh"): the bootstrap only runs at pod CREATION,
+    // so a stopped husk warmed for something else cannot grow this
+    // workflow's models on resume; it is terminated and made new.
+    rows.push(buttonRow(`▸ ${replacing ? 'REBUILD' : 'WARM'} ${r.name.toUpperCase()} FOR ${h.name.toUpperCase()}`, () => {
       if (!replacing) return doWarm();
-      terminateDest(d.id)
-        .then(() => { flashHint('replaced the stopped pod'); doWarm(); })
-        .catch((e) => flashHint(String(e.message || e)));
+      flashHint('replacing the stopped pod with a fresh one');
+      terminateDest(d.id).then(doWarm).catch((e) => flashHint(String(e.message || e)));
     }));
   }
   rows.push(buttonRow('✕ CLOSE', () => closeRunOnPicker()));
@@ -1036,6 +1039,181 @@ function buildRunOnPicker(h, checking) {
   panel.dirty();
   runOnPanel = panel;
   if (!keepPos) audio.accrete();
+}
+
+// ---------- pod presence: a live panel per warming/serving rig ----------
+// The run-on picker vanishes on click, and a warm or resume used to run
+// invisibly behind transient hints. This is the missing feedback: a
+// persistent panel docked beside the workflow hub showing the rig's state,
+// phase, elapsed cost, and the actions on it, with a boot-log tail on
+// demand. One panel per destination id; it polls the provider itself.
+const podPanels = new Map();   // destId -> pp
+
+function podStateColor(s) {
+  return s === 'SERVING' ? '#8ce99a'
+    : (s === 'STOPPED' || s === 'COLD') ? '#9fb4c0'
+    : s === 'ERROR' ? '#ff6a6a'
+    : '#ffd54a';   // STARTING / warming
+}
+function podRowsKey(pp) { return pp.state + (pp.armed ? 'A' : '') + (pp.logOpen ? 'L' : ''); }
+
+function podDockPos(hub, panel) {
+  if (hub?.corePanel?.mesh) {
+    const pm = hub.corePanel.mesh;
+    pm.updateWorldMatrix(true, false);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(pm.getWorldQuaternion(new THREE.Quaternion()));
+    return pm.getWorldPosition(new THREE.Vector3())
+      .addScaledVector(right, hub.corePanel.worldWidth / 2 + panel.worldWidth / 2 + 0.4);
+  }
+  return cam.pos.clone().add(forward().multiplyScalar(9));
+}
+
+// Open (or focus) the pod panel for a destination; seedPhase is the headline
+// shown until the first poll returns.
+function openPodPanel(dest, hub, seedPhase) {
+  const prev = podPanels.get(dest.id);
+  const t0 = prev?.t0 ?? Date.now();
+  if (prev) closePodPanel(dest.id);
+  const pp = {
+    dest, hub, t0, state: 'STARTING', phase: seedPhase || 'starting',
+    usdHr: dest.usdHr || 0, logLines: [], armed: false, logOpen: false,
+    panel: null, logPanel: null, timer: null, _rowsKey: null,
+  };
+  podPanels.set(dest.id, pp);
+  buildPodPanel(pp);
+  pp.timer = setInterval(() => pollPod(pp), 5000);
+  pollPod(pp);
+  audio.accrete();
+  return pp;
+}
+
+function closePodPanel(destId) {
+  const pp = podPanels.get(destId);
+  if (!pp) return;
+  clearInterval(pp.timer);
+  clearTimeout(pp._armT);
+  closePodLog(pp);
+  if (hotPanel === pp.panel) hotPanel = null;
+  pp.panel?.dispose();
+  podPanels.delete(destId);
+}
+
+function podElapsedMin(pp) { return Math.max(0, (Date.now() - pp.t0) / 60000); }
+
+function buildPodPanel(pp) {
+  const keepPos = pp.panel?.mesh?.position.clone();
+  if (pp.panel) { if (hotPanel === pp.panel) hotPanel = null; pp.panel.dispose(); }
+  const d = pp.dest;
+  const spend = () => (pp.usdHr || 0) * podElapsedMin(pp) / 60;
+  const warming = pp.state === 'STARTING';
+  const rows = [
+    readoutRow(() => pp.state, () => pp.phase || ''),
+    // cold start has no clean %, so the bar is an elapsed estimate against a
+    // ~20min ceiling; it reads as motion, not a promise, and snaps full when
+    // the backend actually answers
+    progressRow(() => pp.state === 'SERVING' ? 1 : Math.min(0.95, podElapsedMin(pp) / 20)),
+    readoutRow(() => (pp.usdHr ? '$' + Number(pp.usdHr).toFixed(2) + '/hr' : 'cost pending'),
+      () => '~$' + spend().toFixed(2) + ' this run'),
+  ];
+  if (pp.hub) rows.push(readoutRow(() => 'for ' + pp.hub.name, () => pp.state === 'SERVING' ? 'bound · queue it' : ''));
+  rows.push(buttonRow(pp.logOpen ? '▾ HIDE BOOT LOG' : '▸ SHOW BOOT LOG', () => {
+    pp.logOpen = !pp.logOpen;
+    if (pp.logOpen) openPodLog(pp); else closePodLog(pp);
+    buildPodPanel(pp);
+  }));
+  if (pp.state === 'SERVING' || warming) {
+    rows.push(buttonRow('■ STOP · KEEP DISK', () => {
+      pp.phase = 'stopping'; buildPodPanel(pp);
+      stopDest(d.id)
+        .then(() => { pp.state = 'STOPPED'; pp.phase = 'stopped, disk kept'; buildPodPanel(pp); })
+        .catch((e) => flashHint(String(e.message || e)));
+    }));
+  }
+  // terminate is destructive: its own armed two-tap row, never an edge zone
+  rows.push(buttonRow(pp.armed ? '✕ CONFIRM · DELETE THE POD' : '✕ TERMINATE · delete pod + disk', () => {
+    if (!pp.armed) {
+      pp.armed = true; buildPodPanel(pp);
+      clearTimeout(pp._armT);
+      pp._armT = setTimeout(() => { pp.armed = false; if (podPanels.has(d.id)) buildPodPanel(pp); }, 2600);
+      return;
+    }
+    clearTimeout(pp._armT);
+    pp.armed = false; pp.phase = 'terminating'; buildPodPanel(pp);
+    terminateDest(d.id)
+      .then(() => { flashHint(d.name + ' terminated'); closePodPanel(d.id); })
+      .catch((e) => flashHint(String(e.message || e)));
+  }));
+  rows.push(buttonRow('✕ CLOSE PANEL · pod keeps running', () => closePodPanel(d.id)));
+
+  const panel = new Panel({
+    title: d.name, subtitle: 'rig · ' + (d.provider || ''),
+    accent: podStateColor(pp.state), rows, worldWidth: 3.0, billboard: true, floating: true,
+  });
+  panel.placeFlat(scene, keepPos || podDockPos(pp.hub, panel));
+  panel.mesh.userData.palette = true;   // click-through-safe like other floaters
+  panel.dirty();
+  pp.panel = panel;
+  pp._rowsKey = podRowsKey(pp);
+}
+
+// Rebuild only when the row set changes (buttons appear/disappear, arm, log
+// toggle); otherwise just recolor by state and repaint the live getters.
+function refreshPodPanel(pp) {
+  if (!pp.panel || podRowsKey(pp) !== pp._rowsKey) buildPodPanel(pp);
+  else { pp.panel.accent = podStateColor(pp.state); pp.panel.dirty(); }
+  pp.logPanel?.dirty();
+}
+
+async function pollPod(pp) {
+  const d = pp.dest;
+  try {
+    const st = await PROVIDERS[d.provider].status(d);
+    if (st.usd_hr != null) pp.usdHr = st.usd_hr;
+    if (st.url) {
+      pp.state = 'SERVING'; pp.phase = 'ready';
+      const rig = listRigs().find((r) => r.id === d.rigId);
+      if (rig) upsertCloudDest(rig, { url: st.url, usdHr: st.usd_hr, stopped: false });
+      if (pp.hub && pp.hub.dest !== d.id) bindDest(pp.hub, d.id);
+    } else if (/exit|stop/.test(st.status || '')) {
+      pp.state = 'STOPPED'; pp.phase = 'stopped, disk kept';
+    } else {
+      pp.state = 'STARTING'; pp.phase = st.status || 'warming';
+    }
+  } catch (e) { pp.phase = 'checking...'; }
+  // while it warms, tail boot.log for a real phase (and the log panel body)
+  if (pp.state === 'STARTING') {
+    try {
+      const lg = await PROVIDERS[d.provider].logs(d);
+      if (Array.isArray(lg.lines)) pp.logLines = lg.lines;
+      if (lg.phase) pp.phase = lg.phase;
+      if (lg.serving) { pp.state = 'SERVING'; pp.phase = 'ready'; }
+    } catch (e) { /* pod not answering yet */ }
+  }
+  refreshPodPanel(pp);
+}
+
+function openPodLog(pp) {
+  closePodLog(pp);
+  const panel = new Panel({
+    title: 'boot log', subtitle: pp.dest.name, accent: '#7ce8dc',
+    worldWidth: 3.8, billboard: true, floating: true,
+    rows: [
+      readoutRow(() => pp.phase || '', () => (pp.logLines?.length || 0) + ' lines'),
+      logRow(() => pp.logLines || [], 16, 'waiting for the pod to write boot.log'),
+    ],
+  });
+  const base = pp.panel?.mesh?.position?.clone() || cam.pos.clone().add(forward().multiplyScalar(9));
+  base.y -= (pp.panel?.worldHeight?.() || 2) / 2 + panel.worldHeight() / 2 + 0.3;
+  panel.placeFlat(scene, base);
+  panel.mesh.userData.palette = true;
+  panel.dirty();
+  pp.logPanel = panel;
+}
+function closePodLog(pp) {
+  if (!pp.logPanel) return;
+  if (hotPanel === pp.logPanel) hotPanel = null;
+  pp.logPanel.dispose();
+  pp.logPanel = null;
 }
 
 // ---------- remote runs: destinations, rigs, and pods ----------
@@ -2731,6 +2909,17 @@ window.CVR = {
     h.dest = destId || null;
     return `${h.name} runs on ${destId || 'local'}`;
   },
+  // pod presence: open the live panel for a rig's destination (docked at the
+  // named hub if given). Does not start anything by itself, just watches.
+  podPanel: (rigId, hubName) => {
+    const d = listDestinations().find(x => x.id === 'cloud-' + rigId || x.rigId === rigId);
+    if (!d) throw new Error('no cloud destination for rig ' + rigId);
+    const h = hubName ? hubs.find(x => x.name.toLowerCase().includes(String(hubName).toLowerCase())) : null;
+    openPodPanel(d, h);
+    return 'pod panel open for ' + d.name;
+  },
+  podPanels: () => [...podPanels.values()].map(pp => ({ dest: pp.dest.id, state: pp.state, phase: pp.phase })),
+  closePodPanel,
   wearDemo: () => {
     if (!worn[0]) wearHands('robot');
     const at = cam.pos.clone().add(forward().multiplyScalar(1.1)).add(new THREE.Vector3(0, -0.15, 0));

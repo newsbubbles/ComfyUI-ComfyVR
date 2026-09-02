@@ -167,6 +167,7 @@ const cloudAdapter = (name) => ({
   pods: () => providerCall(name, 'pods'),
   start: (rig) => providerCall(name, 'start', { rig }),
   status: (dest) => providerCall(name, 'status', { podId: dest.podId }),
+  logs: (dest) => providerCall(name, 'logs', { podId: dest.podId }),
   stop: (dest) => providerCall(name, 'stop', { podId: dest.podId }),
   resume: (dest) => providerCall(name, 'resume', { podId: dest.podId }),
   terminate: (dest) => providerCall(name, 'terminate', { podId: dest.podId }),
@@ -225,6 +226,25 @@ export async function startRig(rigId, onPhase, extra) {
     if (Date.now() - t0 > 15 * 60 * 1000) throw new Error(rig.name + ' took >15min to serve; check the provider console');
     await new Promise((res) => setTimeout(res, 5000));
   }
+}
+
+// Kick a rig into starting WITHOUT waiting for it to serve: create the pod
+// and return the destination immediately (podId set, url null). The caller
+// (the pod panel) polls status/logs itself, so warming is watchable live
+// instead of hidden behind a blocking wait. Same watchdog contract as
+// startRig. extra.manifest rides into the bootstrap.
+export async function kickRig(rigId, extra) {
+  const rig = RIGS.find((r) => r.id === rigId);
+  if (!rig) throw new Error('no rig ' + rigId);
+  const P = PROVIDERS[rig.provider];
+  if (!P) throw new Error('no provider ' + rig.provider);
+  const out = await P.start({
+    ...rig,
+    ...extra,
+    cooldownMin: rig.cooldownMin ?? getSetting('runCooldownMin'),
+    capUsd: rig.capUsd ?? getSetting('runCapUsd'),
+  });
+  return upsertCloudDest(rig, { podId: out.podId, url: null, usdHr: out.usd_hr, stopped: false });
 }
 
 // Stop the pod behind a cloud destination (gpu billing ends; volume keeps).

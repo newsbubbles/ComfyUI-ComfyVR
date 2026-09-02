@@ -120,6 +120,7 @@ export class Panel {
   rowH(r) {
     if (r.kind === 'port') return ROW_H.port * r.lines;
     if (r.kind === 'kbuf') return 26 + (r.lines || 3) * 19 + 8;
+    if (r.kind === 'log') return 8 + (r.lines || 12) * 15 + 8;
     if (r.kind === 'text' && r.oneline) return ROW_H.textline;
     if (r.kind === 'note') {
       // full note body: height follows the wrapped text, computed once
@@ -422,6 +423,27 @@ export class Panel {
         g.fillText(clip(g, `${r.name}: ${JSON.stringify(r.get())}`, W - 2 * PAD), PAD, mid);
         break;
       }
+      case 'log': {
+        // terminal tail: the last N lines, newest at the bottom, monospace
+        const raw = r.get() || [];
+        const arr = Array.isArray(raw) ? raw : String(raw).split('\n');
+        const n = r.lines || 12;
+        const shown = arr.slice(-n);
+        g.fillStyle = withAlpha(A, 0.05);
+        roundRect(g, PAD - 6, y + 4, W - 2 * PAD + 12, h - 8, 5); g.fill();
+        g.font = FONT(11);
+        g.textAlign = 'left';
+        const pad = n - shown.length;   // bottom-align so it fills like a console
+        for (let i = 0; i < shown.length; i++) {
+          g.fillStyle = withAlpha(A, i === shown.length - 1 ? 0.95 : 0.6);
+          g.fillText(clip(g, String(shown[i]).replace(/\t/g, ' '), W - 2 * PAD), PAD, y + 16 + (pad + i) * 15);
+        }
+        if (!shown.length) {
+          g.fillStyle = withAlpha(A, 0.4); g.textAlign = 'center';
+          g.fillText(r.empty || 'no output yet', W / 2, mid); g.textAlign = 'left';
+        }
+        break;
+      }
       case 'glyphs': {
         g.fillStyle = withAlpha(A, 0.9); g.font = FONT(r.big ? 64 : 24); g.textAlign = 'center';
         g.fillText(r.text, W / 2, mid + (r.big ? 4 : 0));
@@ -553,6 +575,7 @@ export function buttonRow(label, onClick) { return { kind: 'button', label, onCl
 export function progressRow(getter) { return { kind: 'progress', get: getter }; }
 export function imageRow(placeholder) { return { kind: 'image', img: null, placeholder }; }
 export function readoutRow(get, get2) { return { kind: 'readout', get, get2 }; }
+export function logRow(get, lines = 12, empty = '') { return { kind: 'log', get, lines, empty }; }
 export function alertRow(get) { return { kind: 'alert', get }; }
 export function glyphRow(text, big = false) { return { kind: 'glyphs', text, big }; }
 export function keysRow(keys, onKey, opts = {}) { return { kind: 'keys', keys, onKey, ...opts }; }
