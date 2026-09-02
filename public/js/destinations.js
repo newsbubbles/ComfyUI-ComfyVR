@@ -133,6 +133,21 @@ export function saveRig(rig) {
 
 export function removeRig(id) { RIGS = RIGS.filter(x => x.id !== id); saveRigs(); }
 
+// Bind a network volume to a rig. A volume is datacenter-locked and mounts
+// only on SECURE pods, so attaching one pins BOTH the datacenter and the
+// cloud: from here the rig warms in that DC on secure, and its /workspace
+// (ComfyUI + models) survives stop/terminate, so later warms are seconds.
+export function attachVolume(rigId, volume) {
+  const rig = RIGS.find((r) => r.id === rigId);
+  if (!rig) throw new Error('no rig ' + rigId);
+  return saveRig({ ...rig, volumeId: volume.id, dataCenter: volume.dataCenterId, cloud: 'SECURE' });
+}
+export function detachVolume(rigId) {
+  const rig = RIGS.find((r) => r.id === rigId);
+  if (!rig) throw new Error('no rig ' + rigId);
+  return saveRig({ ...rig, volumeId: null, dataCenter: null, cloud: null });
+}
+
 // A cloud destination is a rig with a live pod behind it. Starting a rig
 // creates/updates the destination; url is only set while the pod serves.
 export function upsertCloudDest(rig, patch) {
@@ -171,6 +186,11 @@ const cloudAdapter = (name) => ({
   stop: (dest) => providerCall(name, 'stop', { podId: dest.podId }),
   resume: (dest) => providerCall(name, 'resume', { podId: dest.podId }),
   terminate: (dest) => providerCall(name, 'terminate', { podId: dest.podId }),
+  // network volumes are account-level, not tied to a pod: persistent
+  // /workspace so a warm rig skips the multi-GB install
+  volumes: () => providerCall(name, 'volumes'),
+  createVolume: (v) => providerCall(name, 'createVolume', v),
+  deleteVolume: (id) => providerCall(name, 'deleteVolume', { volumeId: id }),
 });
 
 export const PROVIDERS = { runpod: cloudAdapter('runpod'), vast: cloudAdapter('vast') };

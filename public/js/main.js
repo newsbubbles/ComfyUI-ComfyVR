@@ -12,7 +12,7 @@ import { Audio } from './audio.js';
 import { initAgent } from './agent.js';
 import { getSetting, setSetting } from './settings.js';
 import { makeDebugHands, makeFakeJoints } from './wearables.js';
-import { listDestinations, addPeer, removeDestination, clientFor, cachedClient, listRigs, saveRig, removeRig, startRig, kickRig, stopDest, terminateDest, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
+import { listDestinations, addPeer, removeDestination, clientFor, cachedClient, listRigs, saveRig, removeRig, startRig, kickRig, stopDest, terminateDest, attachVolume, detachVolume, PROVIDERS, upsertCloudDest, syncRegistry, refreshCloudStates } from './destinations.js';
 import { workflowManifest, manifestSizes } from './manifest.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1216,6 +1216,86 @@ function closePodLog(pp) {
   pp.logPanel = null;
 }
 
+// ---------- storage volumes: persist /workspace so a warm is seconds ----
+// A RunPod network volume holds ComfyUI + the models across stop/terminate,
+// so the multi-GB install runs ONCE and every later warm skips it. Volumes
+// are datacenter-locked and mount only on SECURE pods, so attaching one
+// pins the rig's datacenter and cloud. Creating a volume is a billed
+// standing resource, so the create rows are armed two-tap and priced.
+let volumePanel = null;
+const VOL_DCS = ['EU-RO-1', 'US-KS-2', 'EU-CZ-1', 'EUR-IS-1'];   // the volume-capable DCs
+const VOL_SIZE = 50;   // GB: ComfyUI venv ~5 + SDXL 6.5 + hunyuan ~5 + headroom
+function closeVolumePanel() {
+  if (!volumePanel) return;
+  if (hotPanel === volumePanel) hotPanel = null;
+  volumePanel.dispose();
+  volumePanel = null;
+}
+async function openVolumePanel(rig, onDone) {
+  closeVolumePanel();
+  const provider = rig.provider;
+  let existing = null;   // null while the account's volumes load
+  const build = () => {
+    const keep = volumePanel?.mesh?.position.clone();
+    closeVolumePanel();
+    const rows = [
+      readoutRow(() => 'storage for ' + rig.name, () => existing == null ? 'checking...' : ''),
+      readoutRow(() => 'a volume persists /workspace', () => '~$' + (VOL_SIZE * 0.07).toFixed(2) + '/mo · secure'),
+    ];
+    for (const v of existing || []) {
+      rows.push(buttonRow(`◆ USE ${String(v.name).toUpperCase()} · ${v.size}GB · ${v.dataCenterId}`, () => {
+        attachVolume(rig.id, v);
+        flashHint(`${v.name} attached to ${rig.name} · secure · ${v.dataCenterId}`);
+        closeVolumePanel(); onDone?.();
+      }));
+      // delete only OUR volumes (comfyvr-*), never a foreign data volume;
+      // money-safety for a volume created in a DC that lacked the GPU
+      if (/^comfyvr-/.test(v.name || '')) {
+        const del = buttonRow(`✕ DELETE ${String(v.name).toUpperCase()}`, () => {
+          if (!del.armed) { del.armed = true; flashHint('tap again · permanently deletes this volume and its contents'); setTimeout(() => { del.armed = false; }, 3500); return; }
+          del.armed = false;
+          PROVIDERS[provider].deleteVolume(v.id)
+            .then(() => { flashHint(v.name + ' deleted'); existing = existing.filter((x) => x.id !== v.id); build(); })
+            .catch((e) => flashHint(String(e.message || e)));
+        });
+        rows.push(del);
+      }
+    }
+    for (const dc of VOL_DCS) {
+      const mk = buttonRow(`＋ NEW ${VOL_SIZE}GB · ${dc}`, () => {
+        if (!mk.armed) {
+          mk.armed = true;
+          flashHint(`tap again · creates a billed ${VOL_SIZE}GB volume in ${dc} (~$${(VOL_SIZE * 0.07).toFixed(2)}/mo)`);
+          setTimeout(() => { mk.armed = false; }, 3500);
+          return;
+        }
+        mk.armed = false;
+        flashHint(`creating ${VOL_SIZE}GB volume in ${dc}...`);
+        PROVIDERS[provider].createVolume({ name: 'comfyvr-' + rig.id, size: VOL_SIZE, dataCenterId: dc })
+          .then((v) => { attachVolume(rig.id, v); flashHint(`volume ready in ${dc} · ${rig.name} is secure now · REBUILD once to fill it`); closeVolumePanel(); onDone?.(); })
+          .catch((e) => flashHint(String(e.message || e)));
+      });
+      rows.push(mk);
+    }
+    rows.push(buttonRow('✕ CLOSE', () => closeVolumePanel()));
+    const panel = new Panel({ title: 'add volume', subtitle: rig.name, accent: '#c5a3ff', rows, worldWidth: 3.4, billboard: true, floating: true });
+    let at;
+    if (keep) at = keep;
+    else if (remotePanel?.mesh) {
+      const pm = remotePanel.mesh; pm.updateWorldMatrix(true, false);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(pm.getWorldQuaternion(new THREE.Quaternion()));
+      at = pm.getWorldPosition(new THREE.Vector3()).addScaledVector(right, remotePanel.worldWidth / 2 + panel.worldWidth / 2 + 0.4);
+    } else at = cam.pos.clone().add(forward().multiplyScalar(9));
+    panel.placeFlat(scene, at);
+    panel.mesh.userData.palette = true;
+    panel.dirty();
+    volumePanel = panel;
+  };
+  build();
+  try { existing = (await PROVIDERS[provider].volumes()).volumes || []; } catch (e) { existing = []; }
+  if (volumePanel) build();
+}
+
 // ---------- remote runs: destinations, rigs, and pods ----------
 // The dedicated submenu the Run On directives call for. Swaps in place
 // of the settings panel so it reads as submenu navigation; the floater
@@ -1275,6 +1355,18 @@ function buildRemoteRuns(pos) {
           .then(() => { flashHint('stopped ' + r.name + ' · gpu billing ended'); rebuild(); })
           .catch((e) => flashHint(String(e.message || e)));
       }));
+    }
+    // persistent storage: a volume makes /workspace survive stop/terminate,
+    // so the multi-GB install happens once and later warms are seconds
+    if (r.volumeId) {
+      rows.push(readoutRow(() => `◆ volume · ${r.dataCenter || ''}`, () => 'secure · disk persists'));
+      const det = buttonRow(`✕ DETACH VOLUME · ${r.name.toUpperCase()}`, () => {
+        if (!det.armed) { det.armed = true; flashHint('tap again · rig goes back to install-every-time'); setTimeout(() => { det.armed = false; }, 3500); return; }
+        detachVolume(r.id); flashHint('volume detached from ' + r.name); rebuild();
+      });
+      rows.push(det);
+    } else {
+      rows.push(buttonRow(`◆ ADD STORAGE VOLUME · ${r.name.toUpperCase()}`, () => openVolumePanel(r, rebuild)));
     }
     const term = buttonRow(`✕ TERMINATE · ${r.name.toUpperCase()}`, () => {
       if (!term.armed) {

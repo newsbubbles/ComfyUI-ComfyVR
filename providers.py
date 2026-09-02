@@ -391,6 +391,33 @@ async def _runpod(action, body, http, key):
                 raise
         return {"podId": d.get("id"), "status": (d.get("desiredStatus") or d.get("status") or "PROVISIONING").lower(), "usd_hr": d.get("costPerHr") or d.get("cost")}
 
+    # ---- network volumes: persistent /workspace so a warm rig skips the
+    # multi-GB install. Volumes are datacenter-locked and only mount on
+    # SECURE pods, so a rig that uses one must pin the volume's dataCenter
+    # and cloud=SECURE (the UI sets both on attach).
+    if action == "volumes":
+        d = await _jget(http, "https://rest.runpod.io/v1/networkvolumes", key)
+        vols = d if isinstance(d, list) else d.get("networkVolumes", [])
+        return {"volumes": [{
+            "id": v.get("id"), "name": v.get("name"),
+            "size": v.get("size"), "dataCenterId": v.get("dataCenterId"),
+        } for v in vols]}
+
+    if action == "createVolume":
+        size = int(body.get("size") or 40)
+        req = {"name": body.get("name") or "comfyvr-store",
+               "size": size, "dataCenterId": body.get("dataCenterId") or "EU-RO-1"}
+        d = await _jget(http, "https://rest.runpod.io/v1/networkvolumes", key, "POST", req)
+        return {"id": d.get("id"), "name": d.get("name"), "size": d.get("size"),
+                "dataCenterId": d.get("dataCenterId")}
+
+    if action == "deleteVolume":
+        vid = body.get("volumeId")
+        if not vid:
+            raise RuntimeError("volumeId required")
+        await _jget(http, f"https://rest.runpod.io/v1/networkvolumes/{vid}", key, "DELETE")
+        return {"status": "deleted"}
+
     pod_id = body.get("podId")
     if not pod_id:
         raise RuntimeError("podId required")
@@ -491,6 +518,11 @@ async def _vast(action, body, http, key):
             raise RuntimeError("vast refused the ask: " + json.dumps(d)[:300])
         return {"podId": str(d.get("new_contract")), "status": "provisioning", "usd_hr": offer.get("dph_total")}
 
+    if action == "volumes":
+        return {"volumes": []}   # vast's storage model has no runpod-style volumes
+    if action in ("createVolume", "deleteVolume"):
+        raise RuntimeError("network volumes are a runpod feature")
+
     pod_id = body.get("podId")
     if not pod_id:
         raise RuntimeError("podId required")
@@ -547,7 +579,8 @@ async def handle(name, action, body, http=None):
     fn = PROVIDERS.get(name)
     if fn is None:
         return 404, {"error": f"unknown provider '{name}'", "known": sorted(PROVIDERS)}
-    if action not in ("pricing", "pods", "start", "status", "stop", "resume", "terminate", "logs"):
+    if action not in ("pricing", "pods", "start", "status", "stop", "resume", "terminate",
+                      "logs", "volumes", "createVolume", "deleteVolume"):
         return 400, {"error": f"unknown action '{action}'"}
     key = api_key(name)
     if not key:
