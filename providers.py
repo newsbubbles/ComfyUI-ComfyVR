@@ -89,9 +89,14 @@ def _save_state():
 # grace window from `started` so a slow install is never stopped mid-boot.
 # A spend cap (cap_usd, optional) TERMINATES when est. spend crosses it.
 # Runs in this process and persists to providers.state.json, so it
-# survives browser death and server restarts; the residual risk is this
-# process dying and never coming back, which the wrist cost meter covers.
+# survives browser death and server restarts. State alone is not enough
+# though: a create whose answer never arrived, or a lost state file,
+# leaves a pod billing that nothing is watching, so the loop also
+# reconciles against the provider's own pod list and adopts any live
+# comfyvr- pod it finds. The residual risk is now only this process not
+# running at all, which is what starting it at boot is for.
 BOOT_GRACE_S = 25 * 60
+RECONCILE_EVERY = 10          # watchdog cycles, so every ten minutes
 WATCH = _load_state()
 _watchdog_started = False
 
@@ -117,15 +122,55 @@ async def _pod_busy(http, url):
         return False
 
 
+async def _reconcile(http):
+    """Give a watcher to any live pod of ours that nothing is watching.
+
+    Local state and the provider drift apart whenever a create succeeds but
+    its answer never arrives, the state file is lost, or a pod is started
+    from another session or the provider console. The provider's own list
+    is the only truth. Pods we did not create are never adopted and never
+    touched: the comfyvr- prefix is the whole authority for acting on one.
+    """
+    import time
+    for prov, fn in PROVIDERS.items():
+        key = api_key(prov)
+        if not key:
+            continue
+        try:
+            listing = await fn("pods", {}, http, key)
+        except Exception as e:
+            print(f"[comfyvr] watchdog: cannot list {prov} pods: {e}")
+            continue
+        for p in listing.get("pods") or []:
+            pod_id = p.get("podId")
+            if not pod_id or pod_id in WATCH:
+                continue
+            if not str(p.get("name") or "").startswith("comfyvr-"):
+                continue
+            if (p.get("status") or "").lower() in ("terminated", "exited", "stopped"):
+                continue
+            WATCH[pod_id] = {
+                "provider": prov, "started": time.time(), "last_used": 0,
+                "usd_hr": p.get("usd_hr") or 0, "cooldown_s": 1800,
+                "cap_usd": None, "adopted": True,
+            }
+            _save_state()
+            print(f"[comfyvr] watchdog: adopted unwatched pod {pod_id} ({p.get('name')})")
+
+
 async def _watchdog():
     import asyncio
     import time
     import aiohttp
+    cycle = 0
     while True:
-        await asyncio.sleep(60)
-        if not WATCH:
-            continue
         async with aiohttp.ClientSession() as http:
+            # truth first: an empty WATCH is exactly when a pod can be lost
+            if cycle % RECONCILE_EVERY == 0:
+                try:
+                    await _reconcile(http)
+                except Exception as e:
+                    print(f"[comfyvr] watchdog: reconcile failed: {e}")
             for pod_id, w in list(WATCH.items()):
                 try:
                     prov, key = w.get("provider"), api_key(w.get("provider", ""))
@@ -157,6 +202,8 @@ async def _watchdog():
                         print(f"[comfyvr] watchdog: stopped idle pod {pod_id} after cooldown")
                 except Exception as e:
                     print(f"[comfyvr] watchdog error on {pod_id}: {e}")
+        cycle += 1
+        await asyncio.sleep(60)
 
 
 def ensure_watchdog():

@@ -50,6 +50,10 @@ def app_factory(backend: str) -> web.Application:
 
     async def on_startup(app):
         app["http"] = aiohttp.ClientSession()
+        # A pod outlives the page that started it, so supervision cannot
+        # wait for someone to open the UI: start watching at boot.
+        import providers
+        providers.ensure_watchdog()
 
     async def on_cleanup(app):
         await app["http"].close()
