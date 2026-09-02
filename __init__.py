@@ -252,15 +252,27 @@ try:
                 async with s.ws_connect(backend, max_msg_size=64 * 1024 * 1024) as ws_backend:
 
                     async def pump(src, dst):
-                        async for msg in src:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                await dst.send_str(msg.data)
-                            elif msg.type == aiohttp.WSMsgType.BINARY:
-                                await dst.send_bytes(msg.data)
-                            else:
-                                break
-                        if not dst.closed:
-                            await dst.close()
+                        # A dropped peer (headset wifi blip, closed tab, sleep)
+                        # raises ConnectionReset/OSError on the next send: normal
+                        # teardown, not a request error. Close both sides so the
+                        # sibling pump ends too.
+                        try:
+                            async for msg in src:
+                                if msg.type == aiohttp.WSMsgType.TEXT:
+                                    await dst.send_str(msg.data)
+                                elif msg.type == aiohttp.WSMsgType.BINARY:
+                                    await dst.send_bytes(msg.data)
+                                else:
+                                    break
+                        except (ConnectionError, OSError):
+                            pass
+                        finally:
+                            for w in (src, dst):
+                                if not w.closed:
+                                    try:
+                                        await w.close()
+                                    except (ConnectionError, OSError):
+                                        pass
 
                     await _aio.gather(pump(ws_client, ws_backend), pump(ws_backend, ws_client))
         except (aiohttp.ClientError, _aio.TimeoutError):
