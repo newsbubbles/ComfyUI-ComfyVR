@@ -1176,7 +1176,14 @@ function buildPodPanel(pp) {
   }
   // terminate is destructive: its own armed two-tap row, never an edge zone.
   // Only when there IS a pod: offering it against nothing just errors.
-  if (d.podId) rows.push(buttonRow(pp.armed ? '✕ CONFIRM · DELETE THE POD' : '✕ TERMINATE · delete pod + disk', () => {
+  // TERMINATE ends the POD and its container disk. A network volume is a
+  // separate, persistent thing that survives it: saying "pod + disk" beside a
+  // volume-backed rig reads as if the volume dies too, which is the opposite
+  // of why the volume exists.
+  const volKept = !!rigVolume(d.rigId);
+  const termLabel = pp.armed ? '✕ CONFIRM · END THE POD'
+    : (volKept ? '✕ TERMINATE POD · volume kept' : '✕ TERMINATE · pod and its disk');
+  if (d.podId) rows.push(buttonRow(termLabel, () => {
     if (!pp.armed) {
       pp.armed = true; buildPodPanel(pp);
       clearTimeout(pp._armT);
@@ -1244,7 +1251,11 @@ async function pollPod(pp) {
     } else if (/exit|stop/.test(st.status || '')) {
       pp.state = 'STOPPED'; pp.phase = 'stopped, disk kept';
     } else {
-      pp.state = 'STARTING'; pp.phase = st.status || 'warming';
+      pp.state = 'STARTING';
+      // the provider's "running" means the CONTAINER is up, which is not the
+      // same as ComfyUI answering and is nothing like the workflow running.
+      // Say which of the three we actually mean.
+      pp.phase = /run/i.test(st.status || '') ? 'pod up · ComfyUI starting' : (st.status || 'warming');
     }
   } catch (e) {
     // a pod that has gone away answers nothing: surface it instead of
@@ -1257,7 +1268,10 @@ async function pollPod(pp) {
   if (pp.state === 'STARTING') {
     try {
       const lg = await PROVIDERS[d.provider].logs(d);
-      if (Array.isArray(lg.lines)) pp.logLines = lg.lines;
+      // boot.log dies with the log server right before ComfyUI takes the port,
+      // so an empty read means "gone", not "nothing happened": keep what we saw
+      // rather than blanking the panel at the exact moment it succeeded.
+      if (Array.isArray(lg.lines) && lg.lines.length) pp.logLines = lg.lines;
       if (lg.phase) pp.phase = lg.phase;
       if (lg.contents) pp.contents = lg.contents;   // keep the last probe seen
       if (lg.serving) { pp.state = 'SERVING'; pp.phase = 'ready'; }
