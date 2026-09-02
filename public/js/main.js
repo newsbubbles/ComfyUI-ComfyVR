@@ -1174,8 +1174,9 @@ function buildPodPanel(pp) {
         .catch((e) => flashHint(String(e.message || e)));
     }));
   }
-  // terminate is destructive: its own armed two-tap row, never an edge zone
-  rows.push(buttonRow(pp.armed ? '✕ CONFIRM · DELETE THE POD' : '✕ TERMINATE · delete pod + disk', () => {
+  // terminate is destructive: its own armed two-tap row, never an edge zone.
+  // Only when there IS a pod: offering it against nothing just errors.
+  if (d.podId) rows.push(buttonRow(pp.armed ? '✕ CONFIRM · DELETE THE POD' : '✕ TERMINATE · delete pod + disk', () => {
     if (!pp.armed) {
       pp.armed = true; buildPodPanel(pp);
       clearTimeout(pp._armT);
@@ -1211,8 +1212,18 @@ function refreshPodPanel(pp) {
 
 async function pollPod(pp) {
   const d = pp.dest;
+  // No pod behind this destination: say so plainly. Reporting STARTING here
+  // (and "checking..." forever when the status call then fails) is a panel
+  // that lies, which is worse than no panel at all.
+  if (!d.podId) {
+    pp.state = 'COLD';
+    pp.phase = 'no pod · use WARM to start one';
+    refreshPodPanel(pp);
+    return;
+  }
   try {
     const st = await PROVIDERS[d.provider].status(d);
+    pp.fails = 0;
     if (st.usd_hr != null) pp.usdHr = st.usd_hr;
     if (st.url) {
       pp.state = 'SERVING'; pp.phase = 'ready';
@@ -1235,7 +1246,13 @@ async function pollPod(pp) {
     } else {
       pp.state = 'STARTING'; pp.phase = st.status || 'warming';
     }
-  } catch (e) { pp.phase = 'checking...'; }
+  } catch (e) {
+    // a pod that has gone away answers nothing: surface it instead of
+    // pretending to still be checking
+    pp.fails = (pp.fails || 0) + 1;
+    if (pp.fails >= 3) { pp.state = 'ERROR'; pp.phase = 'cannot read this pod (gone?) · ' + String(e.message || e).slice(0, 60); }
+    else pp.phase = 'checking...';
+  }
   // while it warms, tail boot.log for a real phase (and the log panel body)
   if (pp.state === 'STARTING') {
     try {
