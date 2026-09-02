@@ -710,9 +710,15 @@ async def handle(name, action, body, http=None):
         _save_state()
     elif action == "resume" and body.get("podId"):
         import time
+        # resume is a start with history: it must inherit the rig's limits,
+        # or a cap set when the pod was first warmed quietly disappears the
+        # moment anyone resumes it.
+        rig = body.get("rig") or {}
         WATCH[body["podId"]] = {
             "provider": name, "started": time.time(), "last_used": time.time(),
-            "usd_hr": out.get("usd_hr") or 0, "cooldown_s": 1800, "cap_usd": None,
+            "usd_hr": out.get("usd_hr") or 0,
+            "cooldown_s": int(float(rig.get("cooldownMin") or 30) * 60),
+            "cap_usd": float(rig.get("capUsd") or 0) or None,
         }
         _save_state()
     elif action in ("stop", "terminate"):

@@ -177,6 +177,17 @@ async function providerCall(name, action, body) {
   return d;
 }
 
+// A resume is a start with history, so it has to carry the same limits a
+// start does. Without them the pod comes back uncapped and on the default
+// cooldown, silently discarding what was set when it was first warmed.
+function rigLimits(rigId) {
+  const rig = RIGS.find((r) => r.id === rigId) || {};
+  return {
+    cooldownMin: rig.cooldownMin ?? getSetting('runCooldownMin'),
+    capUsd: rig.capUsd ?? getSetting('runCapUsd'),
+  };
+}
+
 const cloudAdapter = (name) => ({
   pricing: () => providerCall(name, 'pricing'),
   pods: () => providerCall(name, 'pods'),
@@ -184,7 +195,7 @@ const cloudAdapter = (name) => ({
   status: (dest) => providerCall(name, 'status', { podId: dest.podId }),
   logs: (dest) => providerCall(name, 'logs', { podId: dest.podId }),
   stop: (dest) => providerCall(name, 'stop', { podId: dest.podId }),
-  resume: (dest) => providerCall(name, 'resume', { podId: dest.podId }),
+  resume: (dest) => providerCall(name, 'resume', { podId: dest.podId, rig: rigLimits(dest.rigId) }),
   terminate: (dest) => providerCall(name, 'terminate', { podId: dest.podId }),
   // network volumes are account-level, not tied to a pod: persistent
   // /workspace so a warm rig skips the multi-GB install
