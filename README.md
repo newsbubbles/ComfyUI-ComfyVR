@@ -135,7 +135,7 @@ backend at all so you can explore the space cold.
 ## VR
 
 An `ENTER VR` button appears when a headset runtime is reachable. WebXR
-requires a secure context, and there are three ways to get one:
+requires a secure context, and there are four ways to get one:
 
 - **Wifi, any standalone headset** (this is how the Quest 2 testing is
   done: no cable, no developer mode). With ComfyUI running:
@@ -156,6 +156,38 @@ requires a secure context, and there are three ways to get one:
   is reused, so the warning only happens the first time. The voice
   sidecar for dictation and the agent is optional and separate; start
   it too if you use those.
+- **From anywhere, over tailscale**, when the headset is not on the same
+  wifi as the PC. Install [tailscale](https://tailscale.com) on this
+  machine and on the headset, sign both into the same tailnet, then run
+  `python vr.py` exactly as above. It notices tailscale and prints a
+  second address:
+
+  ```
+  same wifi:  https://192.168.1.19:8443
+  anywhere:   https://yourpc.tailnet-name.ts.net:8444
+  ```
+
+  The tailnet address carries a real certificate, so there is no warning
+  to accept, and it works from any network the headset can reach,
+  cellular included. Use `--ts-port` to move it, `--no-tailscale` to skip
+  it, and `--ts-keep` to leave the address up after the server stops.
+
+  Nothing is ever published to the public internet. ComfyVR can start
+  rented GPU pods and spend real money, so it uses `tailscale serve`,
+  which is visible to your devices only, and never `tailscale funnel`,
+  which is visible to everyone. It also refuses to publish onto a port
+  that already has funnel switched on, or to overwrite a serve rule that
+  something else put there.
+
+  On a Quest, tailscale has to be sideloaded, since it is not in the
+  store: turn on developer mode, `adb install` the universal APK from
+  their releases page, launch it from Unknown Sources, accept the
+  Android VPN dialog, and sign in. Two things worth doing straight
+  away: turn off key expiry for both machines in the tailscale admin
+  console so the link cannot lapse while you are away, and test it once
+  with the headset on cellular rather than home wifi, because a
+  same-wifi success does not prove the connection traverses a strange
+  network.
 - **USB** (Quest with developer mode): connect the cable, run
   `adb reverse tcp:8188 tcp:8188`, then open
   `http://localhost:8188/comfyvr/` in the Quest Browser. On Windows,
