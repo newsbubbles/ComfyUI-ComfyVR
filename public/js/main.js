@@ -1112,16 +1112,23 @@ function rigVolumeContents(rigId, live) {
   if (!rig?.volumeId) return null;
   return live || rig.volumeContents || null;
 }
+// A volume can be ATTACHED but never probed (freshly created). The panel must
+// still say so, otherwise a volume-backed rig looks identical to a bare one.
+function rigVolume(rigId) {
+  return listRigs().find((r) => r.id === rigId)?.volumeId ? listRigs().find((r) => r.id === rigId) : null;
+}
 function volumeLine(pp) {
   const c = rigVolumeContents(pp.dest.rigId, pp.contents);
-  if (!c) return 'volume · contents unknown until first warm';
+  const rig = rigVolume(pp.dest.rigId);
+  if (!c) return rig ? `volume · ${rig.dataCenter || ''} · not filled yet` : 'no volume · installs every time';
   const flags = [c.comfyui ? 'ComfyUI' : null, c.venv ? 'venv' : null].filter(Boolean).join(' ');
   return `volume · ${flags || 'empty'} · ${(c.models || []).length} model${(c.models || []).length === 1 ? '' : 's'}`;
 }
 // Turn the volume's contents into what THIS workflow's warm will actually do.
 function warmPlan(rigId, hub, live) {
   const c = rigVolumeContents(rigId, live);
-  if (!c) return null;
+  // attached but never probed: this warm is the one that fills it
+  if (!c) return rigVolume(rigId) ? { text: 'first fill (~15-20m)', ready: false } : null;
   if (!c.comfyui || !c.venv) return { text: 'full install (~15-20m)', ready: false };
   const want = (workflowManifest(hub.rawWorkflow()).models || []).map((m) => m.name);
   const have = new Set(c.models || []);
@@ -1148,7 +1155,7 @@ function buildPodPanel(pp) {
   if (pp.hub) rows.push(readoutRow(() => 'for ' + pp.hub.name, () => pp.state === 'SERVING' ? 'bound · queue it' : ''));
   // volume feedback: what the persistent disk carries, and what this warm
   // will therefore do (the user's insight: warmup meaning IS the volume diff)
-  if (rigVolumeContents(pp.dest.rigId, pp.contents)) {
+  if (rigVolume(pp.dest.rigId) || rigVolumeContents(pp.dest.rigId, pp.contents)) {
     rows.push(readoutRow(() => volumeLine(pp), () => {
       const wp = pp.hub && warmPlan(pp.dest.rigId, pp.hub, pp.contents);
       return wp ? 'warm: ' + wp.text : '';
