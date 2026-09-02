@@ -45,6 +45,21 @@ ENV_KEYS = {"runpod": "RUNPOD_API_KEY", "vast": "VAST_API_KEY"}
 RUNPOD = "https://api.runpod.io/v2"
 VAST = "https://console.vast.ai/api/v0"
 
+# Fallbacks appended after a rig's own GPU choice, cheapest secure rate first,
+# all 20GB+ so an SDXL-plus-3D workflow fits. Names are exact create-endpoint
+# enum values. Secure prices at 2026-09-02: A5000 .27, A4500 .25, 4000 Ada .28,
+# A40 .44, L4 .49, A6000 .53, 4090 .74. A volume forces SECURE, and secure
+# cloud carries datacenter cards far more reliably than consumer ones.
+SECURE_FALLBACK_GPUS = [
+    "NVIDIA RTX A4500",
+    "NVIDIA RTX A5000",
+    "NVIDIA RTX 4000 Ada Generation",
+    "NVIDIA A40",
+    "NVIDIA L4",
+    "NVIDIA RTX A6000",
+    "NVIDIA GeForce RTX 4090",
+]
+
 STATEFILE = os.path.join(ROOT, "providers.state.json")
 
 
@@ -384,11 +399,22 @@ async def _runpod(action, body, http, key):
         # retires 2026-11-15, revisit before then (template or baked
         # image are the v2-native outs). Status/stop/terminate stay v2
         # and work on v1-created pods (same pod store).
+        # GPU CHOICE (learned the hard way 2026-09-02): there is NO endpoint
+        # anywhere in the REST API that reports which GPUs a datacenter has in
+        # stock, so a single gpuTypeId is a coin flip that returns HTTP 500
+        # "could not find any pods with required specifications". The create
+        # takes a LIST plus gpuTypePriority=custom, meaning "try these in the
+        # order given", so the rig's choice goes first and cheaper secure
+        # alternates follow. This matters most with a network volume, which
+        # forces SECURE, where consumer cards (3090/4090) are often absent
+        # because secure cloud is datacenter-GPU territory.
+        want = rig.get("gpuTypes") or [g for g in [rig.get("gpuType")] if g] or []
+        gpus = list(dict.fromkeys(want + [g for g in SECURE_FALLBACK_GPUS if g not in want]))
         req = {
             "name": "comfyvr-" + (rig.get("id") or rig.get("name") or "rig"),
             "imageName": rig.get("image") or DEFAULT_IMAGE,
-            # ordered preference list; a single gpuType is the one-item case
-            "gpuTypeIds": rig.get("gpuTypes") or [rig.get("gpuType") or "NVIDIA GeForce RTX 4090"],
+            "gpuTypeIds": gpus,
+            "gpuTypePriority": "custom",   # our order, not runpod's pick
             "gpuCount": 1,
             "containerDiskInGb": int(rig.get("disk") or 50),
             "ports": ["8188/http"],
