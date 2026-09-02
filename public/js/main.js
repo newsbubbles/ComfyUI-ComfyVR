@@ -978,7 +978,11 @@ function buildRunOnPicker(h, checking) {
   for (const d of dests) {
     const state = d.kind === 'peer' ? 'PEER' : destState(d);
     if (state === 'STOPPED') {
-      rows.push(buttonRow(`▸ RESUME ${d.name.toUpperCase()} · same disk`, () => {
+      // with a volume, the disk persists what this workflow needs, so the
+      // label says whether resume is instant or still has to install
+      const wp = warmPlan(d.rigId, h);
+      const suffix = wp ? ' · ' + wp.text : ' · same disk';
+      rows.push(buttonRow(`▸ RESUME ${d.name.toUpperCase()}${suffix}`, () => {
         closeRunOnPicker();
         openPodPanel(d, h, 'resuming (disk as you left it)');
         PROVIDERS[d.provider].resume(d).catch((e) => flashHint(String(e.message || e)));
@@ -1076,8 +1080,8 @@ function openPodPanel(dest, hub, seedPhase) {
   if (prev) closePodPanel(dest.id);
   const pp = {
     dest, hub, t0, state: 'STARTING', phase: seedPhase || 'starting',
-    usdHr: dest.usdHr || 0, logLines: [], armed: false, logOpen: false,
-    panel: null, logPanel: null, timer: null, _rowsKey: null,
+    usdHr: dest.usdHr || 0, logLines: [], contents: null, armed: false, logOpen: false,
+    panel: null, logPanel: null, timer: null, _rowsKey: null, _served: false,
   };
   podPanels.set(dest.id, pp);
   buildPodPanel(pp);
@@ -1100,6 +1104,32 @@ function closePodPanel(destId) {
 
 function podElapsedMin(pp) { return Math.max(0, (Date.now() - pp.t0) / 60000); }
 
+// What a rig's volume is known to hold: live probe first (from boot.log this
+// run), else the last-known persisted on the rig. null when there is no
+// volume or it has never been seen.
+function rigVolumeContents(rigId, live) {
+  const rig = listRigs().find((r) => r.id === rigId);
+  if (!rig?.volumeId) return null;
+  return live || rig.volumeContents || null;
+}
+function volumeLine(pp) {
+  const c = rigVolumeContents(pp.dest.rigId, pp.contents);
+  if (!c) return 'volume · contents unknown until first warm';
+  const flags = [c.comfyui ? 'ComfyUI' : null, c.venv ? 'venv' : null].filter(Boolean).join(' ');
+  return `volume · ${flags || 'empty'} · ${(c.models || []).length} model${(c.models || []).length === 1 ? '' : 's'}`;
+}
+// Turn the volume's contents into what THIS workflow's warm will actually do.
+function warmPlan(rigId, hub, live) {
+  const c = rigVolumeContents(rigId, live);
+  if (!c) return null;
+  if (!c.comfyui || !c.venv) return { text: 'full install (~15-20m)', ready: false };
+  const want = (workflowManifest(hub.rawWorkflow()).models || []).map((m) => m.name);
+  const have = new Set(c.models || []);
+  const missing = want.filter((n) => !have.has(n));
+  if (!missing.length) return { text: 'all cached · seconds', ready: true, missing: [] };
+  return { text: `installs ${missing.length} model${missing.length === 1 ? '' : 's'}`, ready: false, missing };
+}
+
 function buildPodPanel(pp) {
   const keepPos = pp.panel?.mesh?.position.clone();
   if (pp.panel) { if (hotPanel === pp.panel) hotPanel = null; pp.panel.dispose(); }
@@ -1116,6 +1146,14 @@ function buildPodPanel(pp) {
       () => '~$' + spend().toFixed(2) + ' this run'),
   ];
   if (pp.hub) rows.push(readoutRow(() => 'for ' + pp.hub.name, () => pp.state === 'SERVING' ? 'bound · queue it' : ''));
+  // volume feedback: what the persistent disk carries, and what this warm
+  // will therefore do (the user's insight: warmup meaning IS the volume diff)
+  if (rigVolumeContents(pp.dest.rigId, pp.contents)) {
+    rows.push(readoutRow(() => volumeLine(pp), () => {
+      const wp = pp.hub && warmPlan(pp.dest.rigId, pp.hub, pp.contents);
+      return wp ? 'warm: ' + wp.text : '';
+    }));
+  }
   rows.push(buttonRow(pp.logOpen ? '▾ HIDE BOOT LOG' : '▸ SHOW BOOT LOG', () => {
     pp.logOpen = !pp.logOpen;
     if (pp.logOpen) openPodLog(pp); else closePodLog(pp);
@@ -1174,6 +1212,17 @@ async function pollPod(pp) {
       const rig = listRigs().find((r) => r.id === d.rigId);
       if (rig) upsertCloudDest(rig, { url: st.url, usdHr: st.usd_hr, stopped: false });
       if (pp.hub && pp.hub.dest !== d.id) bindDest(pp.hub, d.id);
+      // once, on the serve transition, record what the volume now holds: what
+      // the boot probe saw PLUS what this warm's manifest installed. Next time
+      // the space knows the volume's contents with no pod running.
+      if (rig?.volumeId && !pp._served) {
+        pp._served = true;
+        const base = pp.contents || rig.volumeContents || { comfyui: false, venv: false, models: [], packs: [] };
+        const man = pp.hub ? workflowManifest(pp.hub.rawWorkflow()) : { models: [], packs: [] };
+        const models = [...new Set([...(base.models || []), ...(man.models || []).map((m) => m.name)])];
+        const packs = [...new Set([...(base.packs || []), ...(man.packs || []).map((p) => p.id)])];
+        saveRig({ ...rig, volumeContents: { comfyui: true, venv: true, models, packs, at: Date.now() } });
+      }
     } else if (/exit|stop/.test(st.status || '')) {
       pp.state = 'STOPPED'; pp.phase = 'stopped, disk kept';
     } else {
@@ -1186,6 +1235,7 @@ async function pollPod(pp) {
       const lg = await PROVIDERS[d.provider].logs(d);
       if (Array.isArray(lg.lines)) pp.logLines = lg.lines;
       if (lg.phase) pp.phase = lg.phase;
+      if (lg.contents) pp.contents = lg.contents;   // keep the last probe seen
       if (lg.serving) { pp.state = 'SERVING'; pp.phase = 'ready'; }
     } catch (e) { /* pod not answering yet */ }
   }

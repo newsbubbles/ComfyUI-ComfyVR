@@ -201,6 +201,16 @@ def bootstrap_script(rig):
         "mkdir -p /workspace",
         "exec > /workspace/boot.log 2>&1",
         "cd /workspace && (python3 -m http.server 8188 --bind 0.0.0.0 >/dev/null 2>&1 &)",
+        # probe what the (volume) /workspace ALREADY carries before installing,
+        # so the space can say what this warm will actually do and remember a
+        # volume's contents. set -x prefixes its trace with "+ ", so the bare
+        # CVR- lines below are what the log parser reads.
+        "echo CVR-VOLUME-BEGIN",
+        "[ -d /workspace/ComfyUI ] && echo CVR-HAS comfyui || echo CVR-MISS comfyui",
+        "[ -d /workspace/ComfyUI/.venv ] && echo CVR-HAS venv || echo CVR-MISS venv",
+        "find /workspace/ComfyUI/models -type f 2>/dev/null | sed 's#.*/#CVR-MODEL #' | sort -u",
+        "ls -d /workspace/ComfyUI/custom_nodes/*/ 2>/dev/null | sed 's#.*/\\([^/]*\\)/#CVR-PACK \\1#'",
+        "echo CVR-VOLUME-END",
         "export DEBIAN_FRONTEND=noninteractive",
         "apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates || true",
         # blender: CVR RigFit Hands shells it; apt's headless-capable
@@ -278,10 +288,22 @@ async def _boot_log(http, url, tail=200):
             if r.status == 200:
                 lines = (await r.text()).splitlines()
                 return {"lines": lines[-tail:], "serving": False,
-                        "phase": _phase_of(lines)}
-            return {"lines": [], "serving": await _serves(http, url), "phase": ""}
+                        "phase": _phase_of(lines), "contents": _parse_volume(lines)}
+            return {"lines": [], "serving": await _serves(http, url), "phase": "", "contents": None}
     except Exception:
-        return {"lines": [], "serving": False, "phase": "booting the container"}
+        return {"lines": [], "serving": False, "phase": "booting the container", "contents": None}
+
+
+def _parse_volume(lines):
+    """What /workspace already held at boot, from the CVR- probe markers. The
+    install only adds, so the union across probe blocks is the current state.
+    None until the probe has run (so the caller keeps its last known value)."""
+    if not any(l.startswith("CVR-VOLUME") for l in lines):
+        return None
+    has = {l[len("CVR-HAS "):].strip() for l in lines if l.startswith("CVR-HAS ")}
+    models = sorted({l[len("CVR-MODEL "):].strip() for l in lines if l.startswith("CVR-MODEL ") and l[len("CVR-MODEL "):].strip()})
+    packs = sorted({l[len("CVR-PACK "):].strip() for l in lines if l.startswith("CVR-PACK ") and l[len("CVR-PACK "):].strip()})
+    return {"comfyui": "comfyui" in has, "venv": "venv" in has, "models": models, "packs": packs}
 
 
 # The bootstrap is `set -x`, so its trace names each step; turn the tail of
