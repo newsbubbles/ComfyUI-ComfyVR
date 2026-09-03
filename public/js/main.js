@@ -1876,6 +1876,16 @@ const KB_SYM_ROWS = [
 // bottom row shaped like a keyboard's: a real spacebar, the mic as a key
 function kbBottomKeys(sym, mic = '🎤') { return ['✕', '⇧', sym ? 'ABC' : 'SYM', '◂', 'SPACE', '▸', mic, '⌫', 'OK']; }
 const KB_BOTTOM_W = [0.9, 1, 1.1, 0.7, 2.6, 0.7, 1, 1, 1.2];
+// A keyboard is a HAND-scale object, not a wall panel. One world unit is one
+// metre (the wrist watch hangs 3cm off a tracked grip), so the old 3.8m board
+// put a single key at 38cm: wider than the hand pressing it, and you had to
+// stand back to see the whole thing. Real keys are ~19mm; a poke target wants
+// more than that, so ~5cm keys within arm's reach. Panel textures are a fixed
+// 512px wide regardless of worldWidth, so shrinking costs no legibility, it
+// buys 7x the pixel density.
+const KB_WIDTH = 0.52;   // 10 columns -> ~5.2cm keys
+const KB_DIST = 0.60;    // arm's reach, not across the room
+const KB_DROP = 0.22;    // ~20 degrees under the eye line, like a desk tray
 function openKbd(panel, row) {
   closeKbd(false);
   const xform = (k) => (kbd?.caps ? k.toUpperCase() : k);
@@ -1889,12 +1899,12 @@ function openKbd(panel, row) {
     ...gridRows,
     bottomRow,
   ];
-  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: 3.8, billboard: true, floating: true });
+  const kp = new Panel({ title: 'type', subtitle: panel.title, accent: panel.accent, rows, worldWidth: KB_WIDTH, billboard: true, floating: true });
   // place where the head actually looks (XR lesson: cam.yaw is stale while
-  // presenting), a touch low so it reads like a tray under the node
+  // presenting), dropped under the eye line so it reads as a tray you type on
   const head = camera.getWorldPosition(new THREE.Vector3());
   const dir = camera.getWorldDirection(new THREE.Vector3());
-  kp.placeFlat(scene, head.addScaledVector(dir, 6).add(new THREE.Vector3(0, -0.8, 0)));
+  kp.placeFlat(scene, head.addScaledVector(dir, KB_DIST).add(new THREE.Vector3(0, -KB_DROP, 0)));
   kp.mesh.userData.palette = true;   // same always-reachable rule as the palette
   kp.dirty();
   const buffer = String(row.get() ?? '');
