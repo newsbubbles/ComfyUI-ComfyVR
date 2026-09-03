@@ -109,14 +109,17 @@ export const FLOATERS = new Set();
 
 export class Panel {
   // rows: [{kind, ...}] — see builders below. worldWidth in scene units.
-  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false, deletable = false, floating = false }) {
+  constructor({ title, subtitle = '', accent = '#7ce8dc', rows = [], worldWidth = 4.4, billboard = false, deletable = false, floating = false, frame = null }) {
     this.id = PANEL_SEQ++;
     this.floating = floating;
     this.title = title; this.subtitle = subtitle; this.accent = accent;
     this.deletable = deletable;
     this.rows = rows;
     this.worldWidth = worldWidth;
-    this.frame = frameOf(worldWidth);
+    // frame: 0 opts out entirely. The wrist watch rides your arm, is never
+    // dragged anywhere, and at 0.2m wide the minimum frame made it half again
+    // as big for nothing.
+    this.frame = frame == null ? frameOf(worldWidth) : frame;
     this.billboard = billboard;
     this.pxH = ROW_H.header + rows.reduce((s, r) => s + this.rowH(r), 0) + PAD;
     this.canvas = document.createElement('canvas');
@@ -129,25 +132,23 @@ export class Panel {
       map: this.tex, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, depthTest: false, side: THREE.DoubleSide, opacity: 0,
     });
-    // The grab frame is mesh area whose uv falls outside 0..1. Sampling the
-    // texture there TINTS it: clamp-to-edge takes the outermost texel, and
-    // mipmaps average that texel with the glass fill and the border stroke,
-    // so the margin reads as a slightly different colour and gets worse with
-    // distance as lower mips kick in. No amount of trimming the canvas edge
-    // survives mipmapping. Draw nothing out there instead.
+    // The grab frame is mesh area whose uv falls outside 0..1, and it must not
+    // be shaded at all: clamp-to-edge stretches the outermost texel across the
+    // whole margin (mipmaps then blend it with the glass), which is what made
+    // every node show its draggable surface from any distance.
+    // three has NOT resolved its #include chunks when this runs, so vMapUv and
+    // vUv do not appear in this source. Testing for them silently disables the
+    // patch, which is exactly how the first attempt shipped doing nothing at
+    // all. Carry our own varying off the uv attribute, which three's vertex
+    // prefix always declares.
     this.mat.onBeforeCompile = (shader) => {
-      // fall back to doing nothing rather than injecting against a varying
-      // that is not declared: a failed compile would blank every panel
-      const uv = shader.fragmentShader.includes('vMapUv') ? 'vMapUv'
-        : shader.fragmentShader.includes('vUv') ? 'vUv' : null;
-      if (!uv) return;
-      shader.fragmentShader = shader.fragmentShader.replace(
+      shader.vertexShader = 'varying vec2 vFrameUv;\n' + shader.vertexShader.replace(
+        'void main() {', 'void main() {\n\tvFrameUv = uv;');
+      shader.fragmentShader = 'varying vec2 vFrameUv;\n' + shader.fragmentShader.replace(
         'void main() {',
-        `void main() {
-	if (${uv}.x < 0.0 || ${uv}.x > 1.0 || ${uv}.y < 0.0 || ${uv}.y > 1.0) discard;`,
-      );
+        'void main() {\n\tif (vFrameUv.x < 0.0 || vFrameUv.x > 1.0'
+        + ' || vFrameUv.y < 0.0 || vFrameUv.y > 1.0) discard;');
     };
-    // keep our patched program out of the shared MeshBasicMaterial cache
     this.mat.customProgramCacheKey = () => 'comfyvr-panel-frame';
     this.mesh = null;          // created in place()/placeFlat()
     this.hot = null;           // hovered row

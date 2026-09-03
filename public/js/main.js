@@ -2592,7 +2592,7 @@ function attachWrist(grip, ci) {
       buttonRow('⌂ BACK OUT', () => { stepBack(); audio.dock?.(); }),
       buttonRow('⏏ EXIT VR', () => renderer.xr.getSession()?.end()),
     ];
-    wrist = { panel: new Panel({ title: 'comfyvr', rows, worldWidth: 0.2 }) };
+    wrist = { panel: new Panel({ title: 'comfyvr', rows, worldWidth: 0.2, frame: 0 }) };
   }
   const mesh = wrist.panel.mesh || wrist.panel.placeFlat(grip, new THREE.Vector3());
   if (mesh.parent !== grip) grip.add(mesh);
