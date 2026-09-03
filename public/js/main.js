@@ -1663,6 +1663,10 @@ function reachable(hit) { return hit.dist < REACH || !!hit.object.userData.palet
 // is trying to delete, and this is one extra draw call for the whole scene.
 let frameGlow = null, glowPanel = null;
 function revealFrame(panel) {
+  // Docked in front of a node you deliberately travelled to, the outline has
+  // nothing left to teach: you already know the border is there and that it
+  // drags. Reserve the reveal for panels you are merely looking at.
+  if (cam.dock?.panel === panel) { hideFrame(); return; }
   if (panel === glowPanel) return;
   hideFrame();
   if (!panel?.mesh?.geometry) return;
