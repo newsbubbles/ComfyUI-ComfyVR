@@ -246,8 +246,8 @@ canvas.addEventListener('pointerdown', (e) => {
       sliderDrag = hit;
       dragMode = 'slider';
       applySlider(hit, e);
-    } else if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null) {
-      if (!inDeleteZone(hit)) pendingGrab = { kind: 'move', hit };
+    } else if (ri.kind === 'frame' && hit.hub && hit.panel.userData?.nodeId != null) {
+      pendingGrab = { kind: 'move', hit };
     } else if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null) {
       const s = portSlotAt(hit);
       if (s && s.dir === 'out') {
@@ -1654,6 +1654,37 @@ const REACH_XR = 21;   // headset rays are shakier; touch reaches further
 function reachable(hit) { return hit.dist < REACH || !!hit.object.userData.palette || !!hit.object.userData.library; }
 
 // Right corner of a node header is the ✕: tap to arm, tap again to delete.
+// ---------- grab frame reveal ----------
+// The frame must announce itself or it is exactly the invisible edge zone we
+// banned. Quest reveals a panel's border as your hand nears it, so do that:
+// ONE shared outline that adopts the hovered panel's own (already grown)
+// geometry, parented to it so it inherits the transform for free. Never a
+// canvas repaint: a texture upload per hover is the cost the render budget
+// is trying to delete, and this is one extra draw call for the whole scene.
+let frameGlow = null, glowPanel = null;
+function revealFrame(panel) {
+  if (panel === glowPanel) return;
+  hideFrame();
+  if (!panel?.mesh?.geometry) return;
+  const geo = new THREE.EdgesGeometry(panel.mesh.geometry, 30);
+  if (!frameGlow) {
+    frameGlow = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      transparent: true, opacity: 0.55, depthTest: false,
+    }));
+    frameGlow.renderOrder = 11;
+  } else {
+    frameGlow.geometry.dispose();
+    frameGlow.geometry = geo;
+  }
+  frameGlow.material.color.set(panel.accent || '#7ce8dc');
+  panel.mesh.add(frameGlow);
+  glowPanel = panel;
+}
+function hideFrame() {
+  if (frameGlow && frameGlow.parent) frameGlow.parent.remove(frameGlow);
+  glowPanel = null;
+}
+
 function inDeleteZone(hit) {
   return hit.rowInfo?.kind === 'header' && hit.panel?.deletable && (hit.rowInfo.frac ?? 0) > 0.78;
 }
@@ -1687,6 +1718,7 @@ function hover(e) {
   if (hotPanel && hotPanel !== p && hotPanel.hotHeader) { hotPanel.hotHeader = false; hotPanel.dirty(); }
   if (p && p.hotHeader !== hh) { p.hotHeader = hh; p.dirty(); }
   if (hotPanel && hotPanel !== p) { hotPanel.setHot(null); hotPanel = null; }
+  if (p && reachable(hit)) revealFrame(p); else hideFrame();
   if (hh) hotPanel = p;
   if (p && hit.rowInfo?.row && reachable(hit)) {
     if (p.hot !== hit.rowInfo.row) audio.tick();
@@ -2619,6 +2651,19 @@ function xrSelectStart(st) {
   if (vrReach && ri) {
     // floating panels (keyboard, settings, pickers, provenance) move by
     // their title bar: pinch it and the panel rides the ray at its distance
+    // The grab frame is the ONLY thing that moves a panel now. That frees the
+    // header and the whole body to mean travel, so "pinch the node to go to
+    // it" works at 7m and at 50m without a distance rule deciding for you.
+    if (ri.kind === 'frame') {
+      if (floatingPanel(hit.panel)) {
+        st.mode = 'float';
+        st.floatPanel = hit.panel;
+        st.floatDist = hit.dist;
+        audio.tick();
+        return;
+      }
+      if (hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) { armMoveDrag(st, hit); return; }
+    }
     if (ri.kind === 'header' && floatingPanel(hit.panel)) {
       st.mode = 'float';
       st.floatPanel = hit.panel;
@@ -2627,9 +2672,8 @@ function xrSelectStart(st) {
       return;
     }
     if (ri.kind === 'slider') { st.mode = 'slider'; applySliderFrac(hit.panel, ri.row, ri.frac); return; }
-    if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && !moveDrag) {
-      if (inDeleteZone(hit)) { armOrDelete(hit.panel, hit.hub); return; }
-      armMoveDrag(st, hit);
+    if (ri.kind === 'header' && hit.hub && hit.panel.userData?.nodeId != null && inDeleteZone(hit)) {
+      armOrDelete(hit.panel, hit.hub);
       return;
     }
     if (ri.kind === 'port' && hit.hub && hit.panel.userData?.nodeId != null && !linkDrag) {
@@ -2680,16 +2724,8 @@ function xrSelectStart(st) {
   }
   if (hit.hub && hit.panel === hit.hub.sigil) { flyToHub(hit.hub); return; }
   if (hit.panel && hit.hub) {
-    // a NODE panel's body up close: motion decides. A still pinch is a
-    // click (dock, as ever); a moving hand is a grab, and in VR grabbing
-    // the thing anywhere should move it — header-only grabs are a mouse
-    // habit. Distant pinches still dock instantly (grabs only arm close).
-    if (vrReach && hit.panel.userData?.nodeId != null && !moveDrag) {
-      st.mode = 'maybe-move';
-      st.pressStart = st.c.position.clone();
-      st.pressHit = hit;
-      return;
-    }
+    // Body, header, anything that is not a control: travel. Grabbing lives on
+    // the frame, so the body no longer has to guess between move and dock.
     dockToPanel(hit.panel, hit.hub);
   }
 }
@@ -2711,9 +2747,6 @@ function xrSelectEnd(st) {
   if (st.mode === 'link' && linkDrag) finishLink(st.hit);
   if (st.mode === 'move') endMove();
   if (st.mode === 'slider') audio.tick();
-  if (st.mode === 'maybe-move' && st.pressHit) {
-    dockToPanel(st.pressHit.panel, st.pressHit.hub);   // a still pinch was a click all along
-  }
   st.mode = null; st.pressHit = null; st.pressStart = null; st.floatPanel = null;
   dragMode = null; sliderDrag = null; pendingGrab = null;
 }
@@ -2740,14 +2773,6 @@ function xrControllersTick() {
       st.dot.visible = false;
       continue;
     }
-    if (st.mode === 'maybe-move') {
-      // ~2.5cm of hand travel while pinched = a deliberate grab
-      if (!moveDrag && st.pressStart && st.c.position.distanceTo(st.pressStart) > 0.025) {
-        armMoveDrag(st, st.pressHit);
-      }
-      st.dot.visible = false;
-      continue;
-    }
     if (st.mode === 'move' && moveDrag) { doMoveRay(); st.dot.visible = false; continue; }
     if (st.mode === 'link' && linkDrag) { doLinkDragRay(); st.hit = pickRay(); continue; }
     if (st.mode === 'slider' && st.hit) {
@@ -2766,6 +2791,7 @@ function xrControllersTick() {
       // the cursor dot shrinks on near surfaces (the wrist watch especially):
       // full size at 4+ units, a quarter size when touching-close
       st.dot.scale.setScalar(THREE.MathUtils.clamp(hit.dist / 4, 0.25, 1));
+      if (hit.panel && hit.dist < REACH_XR) revealFrame(hit.panel); else hideFrame();
       if (hit.panel && hit.rowInfo?.row && hit.dist < REACH_XR) {
         if (hit.panel.hot !== hit.rowInfo.row) audio.tick();
         hit.panel.setHot(hit.rowInfo.row);
@@ -2774,6 +2800,7 @@ function xrControllersTick() {
     } else {
       st.rayLine.scale.z = 10;
       st.dot.visible = false;
+      hideFrame();
     }
   }
 }

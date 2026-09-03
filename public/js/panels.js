@@ -7,6 +7,24 @@ import { colorForType, linkTypeMatches } from './graph.js';
 
 export const PW = 512;                      // canvas px width
 const PAD = 18;
+
+// Quest-style grab frame: a margin OUTSIDE the content that moves the panel.
+// Outset, never inset: the content only has PAD of 512px (3.5%) of slack,
+// far too thin to hit with a ray from the hub centre 7m away. The mesh grows
+// by `frame` on every side and the UVs are scaled to match, so the canvas
+// still lands exactly on the content rect and the margin samples the (always
+// transparent) edge texel. worldWidth keeps meaning CONTENT width, so every
+// caller, anchorWorld and the u/vTop hit math are untouched.
+const FRAME_FRAC = 0.06, FRAME_MIN = 0.05, FRAME_MAX = 0.35;
+export function frameOf(w) { return Math.min(Math.max(w * FRAME_FRAC, FRAME_MIN), FRAME_MAX); }
+
+function scaleUV(geo, sx, sy) {
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, (uv.getX(i) - 0.5) * sx + 0.5, (uv.getY(i) - 0.5) * sy + 0.5);
+  }
+  uv.needsUpdate = true;
+}
 export const ROW_H = { header: 40, port: 22, slider: 40, combo: 40, seed: 40, toggle: 40, text: 84, textline: 40, button: 46, progress: 20, image: 150, readout: 24, opaque: 24, alert: 24, keys: 52, kbuf: 96 };
 const ERR = '#ff6a6a';
 const FONT = (px, bold) => `${bold ? 'bold ' : ''}${px}px Consolas, "Courier New", monospace`;
@@ -55,7 +73,7 @@ export function pumpRedraws(t, budget = 4) {
 // Inward-facing cylinder sector with explicit UVs so text reads correctly
 // from the hub core (substrate gotcha: canvas y-down vs mesh v-up, plus
 // inside-view mirroring — both handled here, in one place).
-function sectorGeometry(radius, arc, height, segs = 20) {
+function sectorGeometry(radius, arc, height, segs = 20, sx = 1, sy = 1) {
   const pos = [], uv = [], idx = [];
   for (let iy = 0; iy <= 1; iy++) {
     for (let ix = 0; ix <= segs; ix++) {
@@ -64,7 +82,7 @@ function sectorGeometry(radius, arc, height, segs = 20) {
       pos.push(Math.sin(th) * radius, (iy - 0.5) * height, -Math.cos(th) * radius);
       // Viewer sits at the ring center looking outward: canvas left must
       // land at -theta (their left); flipY texture puts canvas top at v=1.
-      uv.push(u, iy);
+      uv.push((u - 0.5) * sx + 0.5, (iy - 0.5) * sy + 0.5);
     }
   }
   for (let ix = 0; ix < segs; ix++) {
@@ -98,6 +116,7 @@ export class Panel {
     this.deletable = deletable;
     this.rows = rows;
     this.worldWidth = worldWidth;
+    this.frame = frameOf(worldWidth);
     this.billboard = billboard;
     this.pxH = ROW_H.header + rows.reduce((s, r) => s + this.rowH(r), 0) + PAD;
     this.canvas = document.createElement('canvas');
@@ -159,7 +178,9 @@ export class Panel {
     this.placement = { r, theta, y, arc: this.worldWidth / r };
     if (rebuild) {
       this.mesh.geometry.dispose();
-      this.mesh.geometry = sectorGeometry(r, this.placement.arc, this.worldHeight());
+      const ch = this.worldHeight(), f = this.frame;
+      const gArc = (this.worldWidth + 2 * f) / r, gH = ch + 2 * f;
+      this.mesh.geometry = sectorGeometry(r, gArc, gH, 20, gArc / this.placement.arc, gH / ch);
     }
     this.mesh.rotation.set(this.tilt || 0, -theta - Math.PI / 2, 0);  // local -Z toward angle theta
     this.mesh.position.y = y;
@@ -167,7 +188,10 @@ export class Panel {
 
   // Flat billboard (core panels, sigils).
   placeFlat(parent, position) {
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this.worldWidth, this.worldHeight()), this.mat);
+    const cw = this.worldWidth, ch = this.worldHeight(), f = this.frame;
+    const geo = new THREE.PlaneGeometry(cw + 2 * f, ch + 2 * f);
+    scaleUV(geo, (cw + 2 * f) / cw, (ch + 2 * f) / ch);
+    this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.position.copy(position);
     this.mesh.userData.panel = this;
     this.mesh.renderOrder = 10;
@@ -194,6 +218,8 @@ export class Panel {
   dirty() { if (!this.disposed) redrawQueue.add(this); }
 
   rowAt(u, vTop) {
+    // outside the content rect is the grab frame, not a row
+    if (u < 0 || u > 1 || vTop < 0 || vTop > 1) return { row: null, kind: 'frame' };
     const y = vTop * this.pxH;
     let acc = ROW_H.header;
     if (y < acc) return { row: null, kind: 'header', frac: (u * PW - PAD) / (PW - 2 * PAD) };
@@ -266,6 +292,12 @@ export class Panel {
     // scanlines
     g.fillStyle = 'rgba(0,0,0,0.16)';
     for (let sy = 2; sy < H; sy += 4) g.fillRect(1, sy, W - 2, 1);
+    // The grab frame samples the outermost texel ring (clamp to edge) across
+    // the whole margin, so that ring has to stay transparent. The glass
+    // stroke sits on x=1 with a 2.5px pen, which bleeds into column 0 and
+    // would paint a halo the size of the frame. Trim it.
+    g.clearRect(0, 0, W, 1); g.clearRect(0, H - 1, W, 1);
+    g.clearRect(0, 0, 1, H); g.clearRect(W - 1, 0, 1, H);
     this.tex.needsUpdate = true;
   }
 
