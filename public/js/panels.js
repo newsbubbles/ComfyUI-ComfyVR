@@ -129,6 +129,26 @@ export class Panel {
       map: this.tex, transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, depthTest: false, side: THREE.DoubleSide, opacity: 0,
     });
+    // The grab frame is mesh area whose uv falls outside 0..1. Sampling the
+    // texture there TINTS it: clamp-to-edge takes the outermost texel, and
+    // mipmaps average that texel with the glass fill and the border stroke,
+    // so the margin reads as a slightly different colour and gets worse with
+    // distance as lower mips kick in. No amount of trimming the canvas edge
+    // survives mipmapping. Draw nothing out there instead.
+    this.mat.onBeforeCompile = (shader) => {
+      // fall back to doing nothing rather than injecting against a varying
+      // that is not declared: a failed compile would blank every panel
+      const uv = shader.fragmentShader.includes('vMapUv') ? 'vMapUv'
+        : shader.fragmentShader.includes('vUv') ? 'vUv' : null;
+      if (!uv) return;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        'void main() {',
+        `void main() {
+	if (${uv}.x < 0.0 || ${uv}.x > 1.0 || ${uv}.y < 0.0 || ${uv}.y > 1.0) discard;`,
+      );
+    };
+    // keep our patched program out of the shared MeshBasicMaterial cache
+    this.mat.customProgramCacheKey = () => 'comfyvr-panel-frame';
     this.mesh = null;          // created in place()/placeFlat()
     this.hot = null;           // hovered row
     this.active = 0;           // execution glow 0..1
@@ -292,12 +312,6 @@ export class Panel {
     // scanlines
     g.fillStyle = 'rgba(0,0,0,0.16)';
     for (let sy = 2; sy < H; sy += 4) g.fillRect(1, sy, W - 2, 1);
-    // The grab frame samples the outermost texel ring (clamp to edge) across
-    // the whole margin, so that ring has to stay transparent. The glass
-    // stroke sits on x=1 with a 2.5px pen, which bleeds into column 0 and
-    // would paint a halo the size of the frame. Trim it.
-    g.clearRect(0, 0, W, 1); g.clearRect(0, H - 1, W, 1);
-    g.clearRect(0, 0, 1, H); g.clearRect(W - 1, 0, 1, H);
     this.tex.needsUpdate = true;
   }
 
